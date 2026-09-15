@@ -1715,6 +1715,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 package io.github.mnem0c0der.liquibase.ext.clickhouse.sql;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.mnem0c0der.liquibase.ext.clickhouse.cluster.OnClusterPolicy;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.cluster.StandaloneClusterPolicy;
@@ -1751,6 +1752,18 @@ class ClickHouseDdlBuilderTest {
             .build();
 
     assertThat(sql).endsWith("ENGINE = MergeTree ORDER BY tuple()");
+  }
+
+  @Test
+  void refusesToBuildATableWithNoColumns() {
+    ClickHouseDdlBuilder builder =
+        ClickHouseDdlBuilder.createTable("`t`")
+            .onCluster(StandaloneClusterPolicy.INSTANCE)
+            .engine("MergeTree");
+
+    assertThatThrownBy(builder::build)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("no columns");
   }
 
   @Test
@@ -1968,6 +1981,11 @@ public final class ClickHouseDdlBuilder {
   }
 
   public String build() {
+    if (columns.isEmpty()) {
+      throw new IllegalStateException(
+          "Cannot create ClickHouse table " + qualifiedTableName + " with no columns");
+    }
+
     StringBuilder sql = new StringBuilder("CREATE TABLE ").append(qualifiedTableName);
     sql.append(clusterPolicy.onClusterClause());
     sql.append(" (").append(String.join(", ", columns)).append(")");
