@@ -27,16 +27,27 @@ public final class ClickHouseTypes {
     return database instanceof ClickHouseDatabase;
   }
 
+  private static final String LOW_CARDINALITY = "LowCardinality(";
+
   /**
-   * Wraps a type in {@code Nullable(...)}.
+   * Оборачивает тип в {@code Nullable(...)}.
    *
-   * <p>ClickHouse forbids Nullable on top of Array and on top of an already-nullable type, so those
-   * cases are returned unchanged.
+   * <p>ClickHouse запрещает Nullable поверх Array и поверх уже нулевого типа, поэтому такие случаи
+   * возвращаются без изменений. Для LowCardinality единственная допустимая вложенность — {@code
+   * LowCardinality(Nullable(T))}, а не наоборот, поэтому обёртка уходит внутрь.
    */
   public static String nullable(String type) {
     String trimmed = type.trim();
+
+    if (trimmed.isEmpty()) {
+      throw new IllegalArgumentException("Cannot make an empty column type nullable");
+    }
     if (trimmed.startsWith("Nullable(") || trimmed.startsWith("Array(")) {
       return trimmed;
+    }
+    if (trimmed.startsWith(LOW_CARDINALITY) && trimmed.endsWith(")")) {
+      String inner = trimmed.substring(LOW_CARDINALITY.length(), trimmed.length() - 1);
+      return LOW_CARDINALITY + nullable(inner) + ")";
     }
     return "Nullable(" + trimmed + ")";
   }

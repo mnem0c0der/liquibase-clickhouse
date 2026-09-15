@@ -16,6 +16,7 @@
 package io.github.mnem0c0der.liquibase.ext.clickhouse.datatype;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.mnem0c0der.liquibase.ext.clickhouse.database.ClickHouseDatabase;
 import liquibase.database.Database;
@@ -84,7 +85,22 @@ class ClickHouseDataTypeTest {
   }
 
   @Test
-  void neverWrapsLowCardinalityOrArrayTypes() {
+  void neverWrapsArrayTypes() {
     assertThat(ClickHouseTypes.nullable("Array(String)")).isEqualTo("Array(String)");
+  }
+
+  @Test
+  void movesTheNullableWrapperInsideLowCardinality() {
+    assertThat(ClickHouseTypes.nullable("LowCardinality(String)"))
+        .isEqualTo("LowCardinality(Nullable(String))");
+    assertThat(ClickHouseTypes.nullable("LowCardinality(Nullable(String))"))
+        .isEqualTo("LowCardinality(Nullable(String))");
+  }
+
+  @Test
+  void rejectsAnEmptyColumnType() {
+    assertThatThrownBy(() -> ClickHouseTypes.nullable("   "))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("empty column type");
   }
 }
