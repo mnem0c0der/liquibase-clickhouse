@@ -2117,7 +2117,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: `AbstractClickHouseSqlGenerator`, `ClickHouseDdlBuilder` (Task 6); `ClickHouseTypes.nullable` (Task 5).
 - Produces:
-  - `TableColumns.renderType(CreateTableStatement statement, String columnName, Database database)` → `String` — тип колонки с уже наложенной обёрткой `Nullable(...)`, используется также в Task 8
+  - `TableColumns.renderType(CreateTableStatement statement, String columnName, Database database)` → `String` — тип колонки с уже наложенной обёрткой `Nullable(...)`. Класс package-private и используется только внутри своего пакета: в Task 8 нужна другая логика — там nullability берётся из `AddColumnStatement.isNullable()`, а не из `getNotNullColumns()`
   - `SqlValues.render(Object value, Database database)` → `String` — значение в виде SQL-литерала; используется также в Task 10
 
 > **Правило nullability.** `CreateTableStatement.getNotNullColumns()` содержит колонки, объявленные NOT NULL. Все остальные в ClickHouse обязаны стать `Nullable(T)` — иначе Liquibase-changeset, валидный на PostgreSQL, потеряет возможность хранить NULL и молча начнёт писать нули и пустые строки.
