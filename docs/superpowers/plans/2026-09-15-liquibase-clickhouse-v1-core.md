@@ -1271,10 +1271,19 @@ public final class OnClusterPolicy implements ClusterPolicy {
   public String resolveEngine(String requestedEngine) {
     String engine = requestedEngine.trim();
     int parenthesis = engine.indexOf('(');
+
+    if (parenthesis >= 0 && !engine.endsWith(")")) {
+      throw new IllegalArgumentException(
+          "Malformed ClickHouse table engine: "
+              + requestedEngine
+              + ". An engine with arguments must close its parenthesis, for example"
+              + " ReplacingMergeTree(version).");
+    }
+
     String family = (parenthesis < 0 ? engine : engine.substring(0, parenthesis)).trim();
 
     if (family.startsWith(REPLICATED_PREFIX) || !family.endsWith(MERGE_TREE_SUFFIX)) {
-      return requestedEngine;
+      return engine;
     }
 
     String replicationArguments =
@@ -1284,8 +1293,7 @@ public final class OnClusterPolicy implements ClusterPolicy {
       return REPLICATED_PREFIX + family + "(" + replicationArguments + ")";
     }
 
-    String existingArguments =
-        engine.substring(parenthesis + 1, engine.lastIndexOf(')')).trim();
+    String existingArguments = engine.substring(parenthesis + 1, engine.length() - 1).trim();
 
     return REPLICATED_PREFIX
         + family
