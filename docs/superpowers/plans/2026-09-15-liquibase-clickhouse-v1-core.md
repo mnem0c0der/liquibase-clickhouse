@@ -738,11 +738,10 @@ public class ClickHouseDatabase extends AbstractJdbcDatabase {
     if (example == null) {
       return false;
     }
-    String catalog =
-        example.getSchema() == null ? null : example.getSchema().getCatalogName();
+    liquibase.structure.core.Schema schema = example.getSchema();
+    String catalog = schema == null ? null : schema.getCatalogName();
     return "system".equalsIgnoreCase(catalog)
         || "INFORMATION_SCHEMA".equalsIgnoreCase(catalog)
-        || "information_schema".equals(catalog)
         || super.isSystemObject(example);
   }
 
