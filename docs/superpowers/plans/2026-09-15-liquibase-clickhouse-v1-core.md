@@ -1371,6 +1371,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 package io.github.mnem0c0der.liquibase.ext.clickhouse.datatype;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.mnem0c0der.liquibase.ext.clickhouse.database.ClickHouseDatabase;
 import liquibase.database.Database;
@@ -1439,8 +1440,23 @@ class ClickHouseDataTypeTest {
   }
 
   @Test
-  void neverWrapsLowCardinalityOrArrayTypes() {
+  void neverWrapsArrayTypes() {
     assertThat(ClickHouseTypes.nullable("Array(String)")).isEqualTo("Array(String)");
+  }
+
+  @Test
+  void movesTheNullableWrapperInsideLowCardinality() {
+    assertThat(ClickHouseTypes.nullable("LowCardinality(String)"))
+        .isEqualTo("LowCardinality(Nullable(String))");
+    assertThat(ClickHouseTypes.nullable("LowCardinality(Nullable(String))"))
+        .isEqualTo("LowCardinality(Nullable(String))");
+  }
+
+  @Test
+  void rejectsAnEmptyColumnType() {
+    assertThatThrownBy(() -> ClickHouseTypes.nullable("   "))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("empty column type");
   }
 }
 ```
@@ -1469,16 +1485,27 @@ public final class ClickHouseTypes {
     return database instanceof ClickHouseDatabase;
   }
 
+  private static final String LOW_CARDINALITY = "LowCardinality(";
+
   /**
    * Оборачивает тип в {@code Nullable(...)}.
    *
    * <p>ClickHouse запрещает Nullable поверх Array и поверх уже нулевого типа, поэтому такие
-   * случаи возвращаются без изменений.
+   * случаи возвращаются без изменений. Для LowCardinality единственная допустимая вложенность —
+   * {@code LowCardinality(Nullable(T))}, а не наоборот, поэтому обёртка уходит внутрь.
    */
   public static String nullable(String type) {
     String trimmed = type.trim();
+
+    if (trimmed.isEmpty()) {
+      throw new IllegalArgumentException("Cannot make an empty column type nullable");
+    }
     if (trimmed.startsWith("Nullable(") || trimmed.startsWith("Array(")) {
       return trimmed;
+    }
+    if (trimmed.startsWith(LOW_CARDINALITY) && trimmed.endsWith(")")) {
+      String inner = trimmed.substring(LOW_CARDINALITY.length(), trimmed.length() - 1);
+      return LOW_CARDINALITY + nullable(inner) + ")";
     }
     return "Nullable(" + trimmed + ")";
   }
