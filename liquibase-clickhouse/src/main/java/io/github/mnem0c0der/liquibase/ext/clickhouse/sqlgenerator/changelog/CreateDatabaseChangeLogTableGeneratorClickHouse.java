@@ -44,11 +44,16 @@ public class CreateDatabaseChangeLogTableGeneratorClickHouse
           "`MD5SUM` Nullable(String)",
           "`DESCRIPTION` Nullable(String)",
           "`COMMENTS` Nullable(String)",
-          "`TAG` Nullable(String)",
           "`LIQUIBASE` Nullable(String)",
           "`CONTEXTS` Nullable(String)",
           "`LABELS` Nullable(String)",
           "`DEPLOYMENT_ID` Nullable(String)",
+          // TAG must stay immediately before ROWVERSION: TagDatabaseGeneratorClickHouse rebuilds
+          // both columns with `SELECT * EXCEPT (...)`, and ClickHouse appends re-added columns to
+          // the end of the select list in the order they are listed, so an INSERT ... SELECT with
+          // no explicit column list only lines up positionally if the table declares them the same
+          // way.
+          "`TAG` Nullable(String)",
           "`"
               + ChangeLogTable.ROW_VERSION_COLUMN
               + "` UInt64"
