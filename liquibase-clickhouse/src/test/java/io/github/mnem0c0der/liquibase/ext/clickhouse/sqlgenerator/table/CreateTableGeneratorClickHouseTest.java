@@ -60,7 +60,7 @@ class CreateTableGeneratorClickHouseTest {
   }
 
   @Test
-  void usesThePrimaryKeyAsTheSortingKey() {
+  void usesThePrimaryKeyAsTheSortingKeyWithoutDuplicatingTheColumn() {
     CreateTableStatement statement = events();
     statement.addPrimaryKeyColumn(
         "id",
@@ -69,12 +69,33 @@ class CreateTableGeneratorClickHouseTest {
         "pk_events",
         null);
 
-    assertThat(generate(statement)).contains("PRIMARY KEY (`id`)").contains("ORDER BY (`id`)");
+    assertThat(generate(statement))
+        .isEqualTo(
+            "CREATE TABLE `analytics`.`events` "
+                + "(`id` Int64, `name` Nullable(String)) "
+                + "ENGINE = MergeTree PRIMARY KEY (`id`) ORDER BY (`id`)");
+  }
+
+  @Test
+  void rendersAColumnDefault() {
+    CreateTableStatement statement = new CreateTableStatement("analytics", null, "events");
+    statement.addColumn(
+        "name",
+        liquibase.datatype.DataTypeFactory.getInstance().fromDescription("varchar(50)", database),
+        "unknown");
+
+    assertThat(generate(statement)).contains("`name` Nullable(String) DEFAULT 'unknown'");
   }
 
   @Test
   void dropsATableUnconditionally() {
     assertThat(generate(new DropTableStatement("analytics", null, "events", false)))
         .isEqualTo("DROP TABLE IF EXISTS `analytics`.`events`");
+  }
+
+  @Test
+  void dropsATableTheSameWayWhetherOrNotCascadeWasRequested() {
+    assertThat(generate(new DropTableStatement("analytics", null, "events", true)))
+        .isEqualTo(generate(new DropTableStatement("analytics", null, "events", false)));
   }
 }

@@ -20,6 +20,7 @@ import io.github.mnem0c0der.liquibase.ext.clickhouse.sql.ClickHouseDdlBuilder;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.sql.Identifiers;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.sql.SqlValues;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.AbstractClickHouseSqlGenerator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import liquibase.database.Database;
 import liquibase.sql.Sql;
@@ -41,7 +42,9 @@ public class CreateTableGeneratorClickHouse
             .onCluster(clusterPolicy())
             .engine(ClickHouseConfiguration.TABLE_ENGINE.getCurrentValue());
 
-    for (String columnName : statement.getColumns()) {
+    // getColumns() is a raw list: a column registered through both addColumn and
+    // addPrimaryKeyColumn appears twice, which would emit a duplicate definition.
+    for (String columnName : new LinkedHashSet<>(statement.getColumns())) {
       String type = TableColumns.renderType(statement, columnName, database);
       Object defaultValue = statement.getDefaultValue(columnName);
 
