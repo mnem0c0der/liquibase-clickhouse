@@ -978,10 +978,12 @@ public final class ClickHouseConfiguration implements AutoloadedConfigurations {
             .setDefaultValue(true)
             .build();
   }
-
-  private ClickHouseConfiguration() {}
 }
 ```
+
+> **У класса НЕ должно быть приватного конструктора.** Реализации `AutoloadedConfigurations` создаёт
+> `ServiceLoader`, а ему нужен публичный конструктор без аргументов. С приватным конструктором ключи просто
+> не зарегистрируются. В самом Liquibase `GlobalConfiguration` устроен так же — конструктор не объявлен вовсе.
 
 - [ ] **Step 4: Зарегистрировать через SPI**
 
