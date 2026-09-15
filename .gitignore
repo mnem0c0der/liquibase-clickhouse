@@ -3,3 +3,6 @@ target/
 .idea/
 *.iml
 .DS_Store
+
+# local working notes, not part of the project
+.local/
