@@ -22,6 +22,7 @@ import java.util.Arrays;
 import java.util.stream.Collectors;
 import liquibase.change.AddColumnConfig;
 import liquibase.database.Database;
+import liquibase.exception.ValidationErrors;
 import liquibase.sql.Sql;
 import liquibase.sqlgenerator.SqlGeneratorChain;
 import liquibase.statement.core.CreateIndexStatement;
@@ -39,6 +40,19 @@ public class CreateIndexGeneratorClickHouse
 
   private static final String DEFAULT_INDEX_TYPE = "minmax";
   private static final int DEFAULT_GRANULARITY = 1;
+
+  /** Reports a unique index as an error instead of waiting for {@code generateSql}. */
+  @Override
+  public ValidationErrors validate(
+      CreateIndexStatement statement,
+      Database database,
+      SqlGeneratorChain<CreateIndexStatement> chain) {
+    ValidationErrors errors = new ValidationErrors();
+    if (Boolean.TRUE.equals(statement.isUnique())) {
+      errors.addError(UnsupportedClickHouseFeatureException.uniqueIndexes().getMessage());
+    }
+    return errors;
+  }
 
   @Override
   public Sql[] generateSql(

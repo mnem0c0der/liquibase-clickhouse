@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import liquibase.database.Database;
 import liquibase.datatype.DataTypeFactory;
+import liquibase.exception.ValidationErrors;
 import liquibase.sql.Sql;
 import liquibase.sqlgenerator.SqlGeneratorChain;
 import liquibase.statement.core.AddColumnStatement;
@@ -38,6 +39,23 @@ import liquibase.statement.core.AddColumnStatement;
  */
 public class AddColumnGeneratorClickHouse
     extends AbstractClickHouseSqlGenerator<AddColumnStatement> {
+
+  /** Reports an auto-increment column as an error instead of waiting for {@code generateSql}. */
+  @Override
+  public ValidationErrors validate(
+      AddColumnStatement statement,
+      Database database,
+      SqlGeneratorChain<AddColumnStatement> chain) {
+    ValidationErrors errors = new ValidationErrors();
+    List<AddColumnStatement> columns =
+        statement.getColumns().isEmpty() ? List.of(statement) : statement.getColumns();
+    for (AddColumnStatement column : columns) {
+      if (column.isAutoIncrement()) {
+        errors.addError(UnsupportedClickHouseFeatureException.autoIncrement().getMessage());
+      }
+    }
+    return errors;
+  }
 
   @Override
   public Sql[] generateSql(

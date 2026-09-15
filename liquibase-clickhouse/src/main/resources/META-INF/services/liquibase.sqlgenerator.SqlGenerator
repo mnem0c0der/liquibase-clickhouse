@@ -14,4 +14,7 @@ io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported.Unsupport
 io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported.UnsupportedFeatureGenerators$PrimaryKey
 io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported.UnsupportedFeatureGenerators$AutoIncrement
 io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported.UnsupportedFeatureGenerators$UniqueConstraint
-io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported.UnsupportedFeatureGenerators$Sequence
+io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported.UnsupportedFeatureGenerators$CreateSequence
+io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported.UnsupportedFeatureGenerators$AlterSequence
+io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported.UnsupportedFeatureGenerators$DropSequence
+io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported.UnsupportedFeatureGenerators$RenameSequence

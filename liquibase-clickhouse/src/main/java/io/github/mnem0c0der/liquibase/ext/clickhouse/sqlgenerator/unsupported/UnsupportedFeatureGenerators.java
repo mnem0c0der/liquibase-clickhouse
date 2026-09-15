@@ -19,6 +19,7 @@ import io.github.mnem0c0der.liquibase.ext.clickhouse.exception.UnsupportedClickH
 import io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.AbstractClickHouseSqlGenerator;
 import java.util.function.Supplier;
 import liquibase.database.Database;
+import liquibase.exception.ValidationErrors;
 import liquibase.sql.Sql;
 import liquibase.sqlgenerator.SqlGeneratorChain;
 import liquibase.statement.SqlStatement;
@@ -26,14 +27,19 @@ import liquibase.statement.core.AddAutoIncrementStatement;
 import liquibase.statement.core.AddForeignKeyConstraintStatement;
 import liquibase.statement.core.AddPrimaryKeyStatement;
 import liquibase.statement.core.AddUniqueConstraintStatement;
+import liquibase.statement.core.AlterSequenceStatement;
 import liquibase.statement.core.CreateSequenceStatement;
+import liquibase.statement.core.DropSequenceStatement;
+import liquibase.statement.core.RenameSequenceStatement;
 
 /**
  * Generators that deliberately refuse to run.
  *
  * <p>The constructs listed here do not exist in ClickHouse. Silently ignoring them would produce a
  * schema that diverges from the changelog, so each generator instead stops the migration and points
- * at a working alternative.
+ * at a working alternative. The refusal is reported from {@code validate}, which Liquibase runs
+ * over the whole changelog before applying anything; {@code generateSql} throws the same exception
+ * as a backstop for any path that skips validation.
  */
 public final class UnsupportedFeatureGenerators {
 
@@ -46,6 +52,11 @@ public final class UnsupportedFeatureGenerators {
 
     Refusing(Supplier<UnsupportedClickHouseFeatureException> refusal) {
       this.refusal = refusal;
+    }
+
+    @Override
+    public ValidationErrors validate(T statement, Database database, SqlGeneratorChain<T> chain) {
+      return new ValidationErrors().addError(refusal.get().getMessage());
     }
 
     @Override
@@ -78,8 +89,26 @@ public final class UnsupportedFeatureGenerators {
     }
   }
 
-  public static class Sequence extends Refusing<CreateSequenceStatement> {
-    public Sequence() {
+  public static class CreateSequence extends Refusing<CreateSequenceStatement> {
+    public CreateSequence() {
+      super(UnsupportedClickHouseFeatureException::sequences);
+    }
+  }
+
+  public static class AlterSequence extends Refusing<AlterSequenceStatement> {
+    public AlterSequence() {
+      super(UnsupportedClickHouseFeatureException::sequences);
+    }
+  }
+
+  public static class DropSequence extends Refusing<DropSequenceStatement> {
+    public DropSequence() {
+      super(UnsupportedClickHouseFeatureException::sequences);
+    }
+  }
+
+  public static class RenameSequence extends Refusing<RenameSequenceStatement> {
+    public RenameSequence() {
       super(UnsupportedClickHouseFeatureException::sequences);
     }
   }

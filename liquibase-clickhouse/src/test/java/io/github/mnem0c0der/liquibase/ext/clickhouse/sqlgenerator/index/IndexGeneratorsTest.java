@@ -23,6 +23,7 @@ import java.util.Arrays;
 import java.util.List;
 import liquibase.change.AddColumnConfig;
 import liquibase.database.Database;
+import liquibase.exception.ValidationErrors;
 import liquibase.sql.Sql;
 import liquibase.sqlgenerator.SqlGeneratorFactory;
 import liquibase.statement.SqlStatement;
@@ -71,6 +72,21 @@ class IndexGeneratorsTest {
     assertThatThrownBy(() -> generate(index(true)))
         .hasMessageContaining("unique indexes")
         .hasMessageContaining("ReplacingMergeTree");
+  }
+
+  @Test
+  void validationReportsAUniqueIndexBeforeAnySqlIsGenerated() {
+    ValidationErrors errors = SqlGeneratorFactory.getInstance().validate(index(true), database);
+
+    assertThat(errors.hasErrors()).isTrue();
+    assertThat(errors.getErrorMessages())
+        .anyMatch(message -> message.contains("ReplacingMergeTree"));
+  }
+
+  @Test
+  void validatesAnOrdinaryIndexCleanly() {
+    assertThat(SqlGeneratorFactory.getInstance().validate(index(false), database).hasErrors())
+        .isFalse();
   }
 
   @Test

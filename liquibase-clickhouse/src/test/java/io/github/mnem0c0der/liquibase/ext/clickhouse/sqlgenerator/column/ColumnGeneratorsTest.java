@@ -23,6 +23,7 @@ import io.github.mnem0c0der.liquibase.ext.clickhouse.exception.UnsupportedClickH
 import java.util.Arrays;
 import java.util.List;
 import liquibase.database.Database;
+import liquibase.exception.ValidationErrors;
 import liquibase.sql.Sql;
 import liquibase.sqlgenerator.SqlGeneratorFactory;
 import liquibase.statement.AutoIncrementConstraint;
@@ -102,6 +103,27 @@ class ColumnGeneratorsTest {
     assertThatThrownBy(() -> generate(new AddColumnStatement(first, second)))
         .isInstanceOf(UnsupportedClickHouseFeatureException.class)
         .hasMessageContaining("generateUUIDv4");
+  }
+
+  @Test
+  void validationReportsAnAutoIncrementColumnBeforeAnySqlIsGenerated() {
+    AddColumnStatement statement =
+        new AddColumnStatement(
+            "analytics", null, "events", "id", "bigint", null, new AutoIncrementConstraint("id"));
+
+    ValidationErrors errors = SqlGeneratorFactory.getInstance().validate(statement, database);
+
+    assertThat(errors.hasErrors()).isTrue();
+    assertThat(errors.getErrorMessages()).anyMatch(message -> message.contains("generateUUIDv4"));
+  }
+
+  @Test
+  void validatesAnOrdinaryAddColumnCleanly() {
+    AddColumnStatement statement =
+        new AddColumnStatement("analytics", null, "events", "country", "varchar(2)", null);
+
+    assertThat(SqlGeneratorFactory.getInstance().validate(statement, database).hasErrors())
+        .isFalse();
   }
 
   @Test

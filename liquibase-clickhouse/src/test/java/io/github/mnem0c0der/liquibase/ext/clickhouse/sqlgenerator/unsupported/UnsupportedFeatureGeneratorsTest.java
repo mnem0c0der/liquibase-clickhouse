@@ -15,19 +15,24 @@
  */
 package io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.mnem0c0der.liquibase.ext.clickhouse.database.ClickHouseDatabase;
 import java.math.BigInteger;
 import liquibase.change.ColumnConfig;
 import liquibase.database.Database;
+import liquibase.exception.ValidationErrors;
 import liquibase.sqlgenerator.SqlGeneratorFactory;
 import liquibase.statement.SqlStatement;
 import liquibase.statement.core.AddAutoIncrementStatement;
 import liquibase.statement.core.AddForeignKeyConstraintStatement;
 import liquibase.statement.core.AddPrimaryKeyStatement;
 import liquibase.statement.core.AddUniqueConstraintStatement;
+import liquibase.statement.core.AlterSequenceStatement;
 import liquibase.statement.core.CreateSequenceStatement;
+import liquibase.statement.core.DropSequenceStatement;
+import liquibase.statement.core.RenameSequenceStatement;
 import org.junit.jupiter.api.Test;
 
 class UnsupportedFeatureGeneratorsTest {
@@ -102,11 +107,41 @@ class UnsupportedFeatureGeneratorsTest {
   }
 
   @Test
+  void refusesAlteringASequence() {
+    assertRefused(
+        new AlterSequenceStatement("analytics", null, "seq"), "sequences", "generateUUIDv4");
+  }
+
+  @Test
+  void refusesDroppingASequence() {
+    assertRefused(
+        new DropSequenceStatement("analytics", null, "seq"), "sequences", "generateUUIDv4");
+  }
+
+  @Test
+  void refusesRenamingASequence() {
+    assertRefused(
+        new RenameSequenceStatement("analytics", null, "seq", "seq_v2"),
+        "sequences",
+        "generateUUIDv4");
+  }
+
+  @Test
   void everyRefusalPointsAtTheDocumentedAlternatives() {
     assertThatThrownBy(
             () ->
                 SqlGeneratorFactory.getInstance()
                     .generateSql(new CreateSequenceStatement("analytics", null, "seq"), database))
         .hasMessageContaining("#unsupported-features");
+  }
+
+  @Test
+  void validationReportsTheRefusalBeforeAnySqlIsGenerated() {
+    ValidationErrors errors =
+        SqlGeneratorFactory.getInstance()
+            .validate(new CreateSequenceStatement("analytics", null, "seq"), database);
+
+    assertThat(errors.hasErrors()).isTrue();
+    assertThat(errors.getErrorMessages()).anyMatch(message -> message.contains("generateUUIDv4"));
   }
 }
