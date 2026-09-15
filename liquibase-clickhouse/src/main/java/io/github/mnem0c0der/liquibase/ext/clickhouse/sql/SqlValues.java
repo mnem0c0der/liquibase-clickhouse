@@ -27,6 +27,7 @@ public final class SqlValues {
     if (value == null) {
       return "NULL";
     }
+    // Liquibase has no Database.objectToSql; the conversion lives on LiquibaseDataType.
     return DataTypeFactory.getInstance().fromObject(value, database).objectToSql(value, database);
   }
 }

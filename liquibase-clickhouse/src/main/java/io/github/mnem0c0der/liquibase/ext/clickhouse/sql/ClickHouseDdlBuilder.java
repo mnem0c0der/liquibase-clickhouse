@@ -114,6 +114,7 @@ public final class ClickHouseDdlBuilder {
       sql.append(" PRIMARY KEY ").append(tuple(primaryKey));
     }
 
+    // MergeTree engines require ORDER BY; tuple() is the empty sorting key.
     sql.append(" ORDER BY ").append(orderBy.isEmpty() ? "tuple()" : tuple(orderBy));
 
     if (partitionBy != null) {
