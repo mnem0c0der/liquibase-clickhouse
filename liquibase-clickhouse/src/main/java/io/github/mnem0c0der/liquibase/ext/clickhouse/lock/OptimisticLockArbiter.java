@@ -33,7 +33,7 @@ import java.util.stream.Collectors;
 public final class OptimisticLockArbiter {
 
   private static final Comparator<LockCandidate> EARLIEST_THEN_SMALLEST_ID =
-      Comparator.comparingLong(LockCandidate::version).thenComparing(LockCandidate::lockId);
+      Comparator.comparing(LockCandidate::claimedAt).thenComparing(LockCandidate::lockId);
 
   private final Duration staleAfter;
 
@@ -42,7 +42,7 @@ public final class OptimisticLockArbiter {
   }
 
   public boolean isStale(LockCandidate candidate, Instant now) {
-    return candidate.grantedAt().plus(staleAfter).isBefore(now);
+    return candidate.renewedAt().plus(staleAfter).isBefore(now);
   }
 
   /**

@@ -27,12 +27,13 @@ class OptimisticLockArbiterTest {
   private static final Instant NOW = Instant.parse("2026-09-15T12:00:00Z");
   private final OptimisticLockArbiter arbiter = new OptimisticLockArbiter(Duration.ofMinutes(5));
 
-  private static LockCandidate claim(String lockId, long version, Instant grantedAt) {
-    return new LockCandidate(lockId, true, grantedAt, version, "host/" + lockId);
+  /** An unrenewed claim: claimedAt and renewedAt are the same instant. */
+  private static LockCandidate claim(String lockId, long version, Instant claimedAt) {
+    return new LockCandidate(lockId, true, claimedAt, claimedAt, version, "host/" + lockId);
   }
 
   private static LockCandidate release(String lockId, long version) {
-    return new LockCandidate(lockId, false, NOW, version, "host/" + lockId);
+    return new LockCandidate(lockId, false, NOW, NOW, version, "host/" + lockId);
   }
 
   @Test
@@ -49,7 +50,7 @@ class OptimisticLockArbiterTest {
 
   @Test
   void theEarliestClaimWins() {
-    List<LockCandidate> rows = List.of(claim("b", 2, NOW), claim("a", 1, NOW));
+    List<LockCandidate> rows = List.of(claim("b", 2, NOW), claim("a", 1, NOW.minusSeconds(10)));
 
     assertThat(arbiter.currentHolder(rows, NOW)).map(LockCandidate::lockId).contains("a");
     assertThat(arbiter.hasWon(rows, "a", NOW)).isTrue();
@@ -57,8 +58,10 @@ class OptimisticLockArbiterTest {
   }
 
   @Test
-  void identicalVersionsAreBrokenByLockIdSoExactlyOneProcessWins() {
-    List<LockCandidate> rows = List.of(claim("zzz", 7, NOW), claim("aaa", 7, NOW));
+  void identicalClaimTimesAreBrokenByLockIdSoExactlyOneProcessWins() {
+    // Versions differ and are the "wrong" way round on purpose: version must not decide the
+    // winner any more, since a renewal raises it without changing who claimed first.
+    List<LockCandidate> rows = List.of(claim("zzz", 9, NOW), claim("aaa", 3, NOW));
 
     assertThat(arbiter.hasWon(rows, "aaa", NOW)).isTrue();
     assertThat(arbiter.hasWon(rows, "zzz", NOW)).isFalse();
@@ -95,5 +98,32 @@ class OptimisticLockArbiterTest {
     LockCandidate borderline = claim("a", 1, NOW.minus(Duration.ofMinutes(5)));
 
     assertThat(arbiter.isStale(borderline, NOW)).isFalse();
+  }
+
+  @Test
+  void aRenewedHolderKeepsWinningAgainstAContenderThatClaimedLater() {
+    // "a" claimed long enough ago that, without a renewal, it would already be stale.
+    Instant longAgo = NOW.minus(Duration.ofMinutes(6));
+    LockCandidate initialClaim = claim("a", 1, longAgo);
+    LockCandidate renewal = new LockCandidate("a", true, longAgo, NOW, 2, "host/a");
+    LockCandidate contender = claim("b", 3, NOW.minus(Duration.ofSeconds(30)));
+
+    List<LockCandidate> rows = List.of(initialClaim, renewal, contender);
+
+    assertThat(arbiter.currentHolder(rows, NOW)).map(LockCandidate::lockId).contains("a");
+    assertThat(arbiter.hasWon(rows, "a", NOW)).isTrue();
+    assertThat(arbiter.hasWon(rows, "b", NOW)).isFalse();
+  }
+
+  @Test
+  void aStaleRenewalLosesToALiveContenderEvenWithAnEarlierClaim() {
+    LockCandidate staleHolder = claim("a", 1, NOW.minus(Duration.ofMinutes(10)));
+    LockCandidate liveContender = claim("b", 2, NOW.minus(Duration.ofMinutes(1)));
+
+    List<LockCandidate> rows = List.of(staleHolder, liveContender);
+
+    assertThat(arbiter.currentHolder(rows, NOW)).map(LockCandidate::lockId).contains("b");
+    assertThat(arbiter.hasWon(rows, "a", NOW)).isFalse();
+    assertThat(arbiter.hasWon(rows, "b", NOW)).isTrue();
   }
 }

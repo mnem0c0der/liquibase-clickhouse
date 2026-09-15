@@ -31,20 +31,12 @@ import liquibase.statement.core.RawSqlStatement;
 /**
  * The only place the extension reads or writes the lock table.
  *
- * <p>The table is append-only: both acquiring and releasing the lock are an INSERT of a new row
- * with a higher version. ReplacingMergeTree read with FINAL keeps only the latest version per
- * lockId.
- *
- * <p>The arbiter's decision is only correct if every contender reads a complete, consistent
- * snapshot of the table. On a single node an INSERT is visible to the very next SELECT, so that
- * holds for free. On a Replicated table a SELECT on another replica can lag behind an INSERT
- * committed elsewhere, which lets two contenders each see themselves as the winner. ClickHouse's
- * quorum settings close that gap: {@code insert_quorum} (paired with {@code insert_quorum_parallel
- * = 0}, which serializes the insert sequence instead of parallelizing quorum acknowledgement) makes
- * a write linearizable, and {@code select_sequential_consistency = 1} makes a read observe every
- * write that was acknowledged before it started. Both are applied to this table's own statements
- * only, and only when {@link ClusterPolicy#isClustered()} — a standalone MergeTree table does not
- * understand these settings and rejects them.
+ * <p>The table is append-only: acquiring, renewing, and releasing the lock are all an INSERT of a
+ * new row with a higher version, and a ReplacingMergeTree read with FINAL keeps only the latest
+ * version per lockId. On a replicated table a lagging read could let two contenders each see
+ * themselves as the winner, so writes carry {@code insert_quorum = 'auto'} with {@code
+ * insert_quorum_parallel = 0} and reads carry {@code select_sequential_consistency = 1}; both apply
+ * only to this table's own statements, and only when {@link ClusterPolicy#isClustered()}.
  */
 public final class LockRepository {
 
@@ -75,8 +67,8 @@ public final class LockRepository {
         "CREATE TABLE IF NOT EXISTS "
             + qualifiedName()
             + clusterPolicy.onClusterClause()
-            + " (`ID` Int32, `LOCKID` String, `LOCKED` UInt8, `LOCKGRANTED` DateTime64(3),"
-            + " `LOCKEDBY` String, `LOCKVERSION` UInt64)"
+            + " (`ID` Int32, `LOCKID` String, `LOCKED` UInt8, `LOCKCLAIMED` DateTime64(3),"
+            + " `LOCKRENEWED` DateTime64(3), `LOCKEDBY` String, `LOCKVERSION` UInt64)"
             + " ENGINE = "
             + engine
             + " ORDER BY (`LOCKID`)");
@@ -86,12 +78,15 @@ public final class LockRepository {
     execute(
         "INSERT INTO "
             + qualifiedName()
-            + " (`ID`, `LOCKID`, `LOCKED`, `LOCKGRANTED`, `LOCKEDBY`, `LOCKVERSION`) VALUES (1, "
+            + " (`ID`, `LOCKID`, `LOCKED`, `LOCKCLAIMED`, `LOCKRENEWED`, `LOCKEDBY`,"
+            + " `LOCKVERSION`) VALUES (1, "
             + Identifiers.literal(candidate.lockId())
             + ", "
             + (candidate.locked() ? 1 : 0)
             + ", fromUnixTimestamp64Milli("
-            + candidate.grantedAt().toEpochMilli()
+            + candidate.claimedAt().toEpochMilli()
+            + "), fromUnixTimestamp64Milli("
+            + candidate.renewedAt().toEpochMilli()
             + "), "
             + Identifiers.literal(candidate.lockedBy())
             + ", "
@@ -105,8 +100,9 @@ public final class LockRepository {
         executor()
             .queryForList(
                 new RawSqlStatement(
-                    "SELECT `LOCKID`, `LOCKED`, toUnixTimestamp64Milli(`LOCKGRANTED`) AS"
-                        + " `GRANTEDMILLIS`, `LOCKEDBY`, `LOCKVERSION` FROM "
+                    "SELECT `LOCKID`, `LOCKED`, toUnixTimestamp64Milli(`LOCKCLAIMED`) AS"
+                        + " `CLAIMEDMILLIS`, toUnixTimestamp64Milli(`LOCKRENEWED`) AS"
+                        + " `RENEWEDMILLIS`, `LOCKEDBY`, `LOCKVERSION` FROM "
                         + qualifiedName()
                         + " FINAL"
                         + readConsistencySettings()));
@@ -117,7 +113,8 @@ public final class LockRepository {
           new LockCandidate(
               String.valueOf(value(row, "LOCKID")),
               ((Number) value(row, "LOCKED")).intValue() != 0,
-              Instant.ofEpochMilli(((Number) value(row, "GRANTEDMILLIS")).longValue()),
+              Instant.ofEpochMilli(((Number) value(row, "CLAIMEDMILLIS")).longValue()),
+              Instant.ofEpochMilli(((Number) value(row, "RENEWEDMILLIS")).longValue()),
               ((Number) value(row, "LOCKVERSION")).longValue(),
               String.valueOf(value(row, "LOCKEDBY"))));
     }

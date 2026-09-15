@@ -22,9 +22,16 @@ import java.time.Instant;
  *
  * @param lockId unique identifier of this lock attempt
  * @param locked true for a claim, false for a release
- * @param grantedAt when the claim was made; used to detect abandoned locks
+ * @param claimedAt when this lockId first claimed the lock; never changes across renewals, and
+ *     decides which contender wins
+ * @param renewedAt last heartbeat for this lockId; decides whether the claim is stale
  * @param version monotonically increasing row version; ReplacingMergeTree keeps the highest
  * @param lockedBy human-readable owner description, for diagnostics
  */
 public record LockCandidate(
-    String lockId, boolean locked, Instant grantedAt, long version, String lockedBy) {}
+    String lockId,
+    boolean locked,
+    Instant claimedAt,
+    Instant renewedAt,
+    long version,
+    String lockedBy) {}
