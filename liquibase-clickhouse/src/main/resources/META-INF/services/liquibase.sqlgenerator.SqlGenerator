@@ -10,3 +10,8 @@ io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.index.DropIndexGenera
 io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.dml.InsertGeneratorClickHouse
 io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.dml.UpdateGeneratorClickHouse
 io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.dml.DeleteGeneratorClickHouse
+io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported.UnsupportedFeatureGenerators$ForeignKey
+io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported.UnsupportedFeatureGenerators$PrimaryKey
+io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported.UnsupportedFeatureGenerators$AutoIncrement
+io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported.UnsupportedFeatureGenerators$UniqueConstraint
+io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported.UnsupportedFeatureGenerators$Sequence
