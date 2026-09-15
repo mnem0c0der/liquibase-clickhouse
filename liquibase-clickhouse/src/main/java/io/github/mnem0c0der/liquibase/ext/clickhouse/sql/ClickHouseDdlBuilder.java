@@ -100,6 +100,11 @@ public final class ClickHouseDdlBuilder {
   }
 
   public String build() {
+    if (columns.isEmpty()) {
+      throw new IllegalStateException(
+          "Cannot create ClickHouse table " + qualifiedTableName + " with no columns");
+    }
+
     StringBuilder sql = new StringBuilder("CREATE TABLE ").append(qualifiedTableName);
     sql.append(clusterPolicy.onClusterClause());
     sql.append(" (").append(String.join(", ", columns)).append(")");

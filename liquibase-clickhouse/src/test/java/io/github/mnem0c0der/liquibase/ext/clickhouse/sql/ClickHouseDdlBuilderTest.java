@@ -16,6 +16,7 @@
 package io.github.mnem0c0der.liquibase.ext.clickhouse.sql;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.mnem0c0der.liquibase.ext.clickhouse.cluster.OnClusterPolicy;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.cluster.StandaloneClusterPolicy;
@@ -105,5 +106,17 @@ class ClickHouseDdlBuilderTest {
                 + "TTL `created` + INTERVAL 30 DAY "
                 + "SETTINGS index_granularity = 8192 "
                 + "COMMENT 'event stream'");
+  }
+
+  @Test
+  void refusesToBuildATableWithNoColumns() {
+    ClickHouseDdlBuilder builder =
+        ClickHouseDdlBuilder.createTable("`t`")
+            .onCluster(StandaloneClusterPolicy.INSTANCE)
+            .engine("MergeTree");
+
+    assertThatThrownBy(builder::build)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("no columns");
   }
 }
