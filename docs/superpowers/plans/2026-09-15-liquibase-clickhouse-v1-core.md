@@ -1667,6 +1667,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
   - `ClickHouseDdlBuilder.createTable(String qualifiedTableName)` → билдер; методы `onCluster(ClusterPolicy)`, `column(String quotedName, String type)`, `columnWithDefault(String quotedName, String type, String defaultExpression)`, `engine(String)`, `orderBy(List<String>)`, `primaryKey(List<String>)`, `partitionBy(String)`, `ttl(String)`, `settings(String)`, `comment(String)`, `build()` → `String`
   - `AbstractClickHouseSqlGenerator<T extends SqlStatement>` с защищёнными методами `clusterPolicy()` → `ClusterPolicy`, `sql(String...)` → `Sql[]`, `qualifiedTableName(Database, String catalog, String table)` → `String`
 
+Каждый вариант отказа описан ровно один раз, в виде статической фабрики. Текст одной и той же
+альтернативы требуется в нескольких генераторах (Task 8, 9, 11), и расползшиеся копии разошлись бы при первой же
+правке формулировки.
+
 > **Почему `ORDER BY tuple()`, а не пропуск секции.** Движки семейства MergeTree требуют `ORDER BY`. Если changeset не задал ни PK, ни явного порядка, единственный корректный вариант — `ORDER BY tuple()`. Пропустить секцию нельзя: ClickHouse откажет в создании таблицы.
 
 - [ ] **Step 1: Написать падающий тест**
@@ -1788,6 +1792,14 @@ import liquibase.exception.UnexpectedLiquibaseException;
  */
 public class UnsupportedClickHouseFeatureException extends UnexpectedLiquibaseException {
 
+  private static final String GENERATE_IDS_IN_APPLICATION =
+      "Generate identifiers in the application, or use a DEFAULT expression such as"
+          + " generateUUIDv4().";
+
+  private static final String DEDUPLICATE_INSTEAD =
+      "Deduplicate with a ReplacingMergeTree engine, or enforce uniqueness in the application"
+          + " before inserting.";
+
   public UnsupportedClickHouseFeatureException(String feature, String alternative) {
     super(
         "ClickHouse does not support "
@@ -1795,6 +1807,37 @@ public class UnsupportedClickHouseFeatureException extends UnexpectedLiquibaseEx
             + ". "
             + alternative
             + " See https://github.com/mnem0c0der/liquibase-clickhouse#unsupported-features");
+  }
+
+  public static UnsupportedClickHouseFeatureException autoIncrement() {
+    return new UnsupportedClickHouseFeatureException(
+        "auto-increment columns", GENERATE_IDS_IN_APPLICATION);
+  }
+
+  public static UnsupportedClickHouseFeatureException sequences() {
+    return new UnsupportedClickHouseFeatureException("sequences", GENERATE_IDS_IN_APPLICATION);
+  }
+
+  public static UnsupportedClickHouseFeatureException uniqueIndexes() {
+    return new UnsupportedClickHouseFeatureException("unique indexes", DEDUPLICATE_INSTEAD);
+  }
+
+  public static UnsupportedClickHouseFeatureException uniqueConstraints() {
+    return new UnsupportedClickHouseFeatureException("unique constraints", DEDUPLICATE_INSTEAD);
+  }
+
+  public static UnsupportedClickHouseFeatureException foreignKeys() {
+    return new UnsupportedClickHouseFeatureException(
+        "foreign key constraints",
+        "Enforce referential integrity in the application, or denormalise the data as is"
+            + " customary for analytical workloads.");
+  }
+
+  public static UnsupportedClickHouseFeatureException primaryKeyOnExistingTable() {
+    return new UnsupportedClickHouseFeatureException(
+        "adding a primary key to an existing table",
+        "The sorting key is fixed at creation time: declare it via ORDER BY in createTable,"
+            + " or create a new table and copy the data across.");
   }
 }
 ```
@@ -2418,10 +2461,7 @@ public class AddColumnGeneratorClickHouse
     List<String> statements = new ArrayList<>(columns.size());
     for (AddColumnStatement column : columns) {
       if (column.isAutoIncrement()) {
-        throw new UnsupportedClickHouseFeatureException(
-            "auto-increment columns",
-            "Generate identifiers in the application, or use a DEFAULT expression such as"
-                + " generateUUIDv4().");
+        throw UnsupportedClickHouseFeatureException.autoIncrement();
       }
       statements.add(
           "ALTER TABLE "
@@ -2742,10 +2782,7 @@ public class CreateIndexGeneratorClickHouse
       SqlGeneratorChain<CreateIndexStatement> chain) {
 
     if (Boolean.TRUE.equals(statement.isUnique())) {
-      throw new UnsupportedClickHouseFeatureException(
-          "unique indexes",
-          "Deduplicate with a ReplacingMergeTree engine, or enforce uniqueness in the"
-              + " application before inserting.");
+      throw UnsupportedClickHouseFeatureException.uniqueIndexes();
     }
 
     String table =
@@ -3176,6 +3213,15 @@ class UnsupportedFeatureGeneratorsTest {
     assertRefused(
         new CreateSequenceStatement("analytics", null, "seq"), "sequences", "generateUUIDv4");
   }
+
+  @Test
+  void everyRefusalPointsAtTheDocumentedAlternatives() {
+    assertThatThrownBy(
+            () ->
+                SqlGeneratorFactory.getInstance()
+                    .generateSql(new CreateSequenceStatement("analytics", null, "seq"), database))
+        .hasMessageContaining("#unsupported-features");
+  }
 }
 ```
 
@@ -3195,6 +3241,7 @@ package io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.unsupported;
 
 import io.github.mnem0c0der.liquibase.ext.clickhouse.exception.UnsupportedClickHouseFeatureException;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.AbstractClickHouseSqlGenerator;
+import java.util.function.Supplier;
 import liquibase.database.Database;
 import liquibase.sql.Sql;
 import liquibase.sqlgenerator.SqlGeneratorChain;
@@ -3219,62 +3266,45 @@ public final class UnsupportedFeatureGenerators {
   private abstract static class Refusing<T extends SqlStatement>
       extends AbstractClickHouseSqlGenerator<T> {
 
-    private final String feature;
-    private final String alternative;
+    private final Supplier<UnsupportedClickHouseFeatureException> refusal;
 
-    Refusing(String feature, String alternative) {
-      this.feature = feature;
-      this.alternative = alternative;
+    Refusing(Supplier<UnsupportedClickHouseFeatureException> refusal) {
+      this.refusal = refusal;
     }
 
     @Override
     public Sql[] generateSql(T statement, Database database, SqlGeneratorChain<T> chain) {
-      throw new UnsupportedClickHouseFeatureException(feature, alternative);
+      throw refusal.get();
     }
   }
 
   public static class ForeignKey extends Refusing<AddForeignKeyConstraintStatement> {
     public ForeignKey() {
-      super(
-          "foreign key constraints",
-          "Enforce referential integrity in the application, or denormalise the data as is"
-              + " customary for analytical workloads.");
+      super(UnsupportedClickHouseFeatureException::foreignKeys);
     }
   }
 
   public static class PrimaryKey extends Refusing<AddPrimaryKeyStatement> {
     public PrimaryKey() {
-      super(
-          "adding a primary key to an existing table",
-          "The sorting key is fixed at creation time: declare it via ORDER BY in createTable,"
-              + " or create a new table and copy the data across.");
+      super(UnsupportedClickHouseFeatureException::primaryKeyOnExistingTable);
     }
   }
 
   public static class AutoIncrement extends Refusing<AddAutoIncrementStatement> {
     public AutoIncrement() {
-      super(
-          "auto-increment columns",
-          "Generate identifiers in the application, or use a DEFAULT expression such as"
-              + " generateUUIDv4().");
+      super(UnsupportedClickHouseFeatureException::autoIncrement);
     }
   }
 
   public static class UniqueConstraint extends Refusing<AddUniqueConstraintStatement> {
     public UniqueConstraint() {
-      super(
-          "unique constraints",
-          "Deduplicate with a ReplacingMergeTree engine, or enforce uniqueness in the"
-              + " application before inserting.");
+      super(UnsupportedClickHouseFeatureException::uniqueConstraints);
     }
   }
 
   public static class Sequence extends Refusing<CreateSequenceStatement> {
     public Sequence() {
-      super(
-          "sequences",
-          "Generate identifiers in the application, or use generateUUIDv4() as a column"
-              + " DEFAULT.");
+      super(UnsupportedClickHouseFeatureException::sequences);
     }
   }
 }
