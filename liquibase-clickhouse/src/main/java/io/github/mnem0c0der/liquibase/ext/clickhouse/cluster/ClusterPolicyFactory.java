@@ -17,7 +17,7 @@ package io.github.mnem0c0der.liquibase.ext.clickhouse.cluster;
 
 import io.github.mnem0c0der.liquibase.ext.clickhouse.config.ClickHouseConfiguration;
 
-/** Выбирает топологию по текущей конфигурации Liquibase. */
+/** Picks a {@link ClusterPolicy} from the current Liquibase configuration. */
 public final class ClusterPolicyFactory {
 
   private ClusterPolicyFactory() {}

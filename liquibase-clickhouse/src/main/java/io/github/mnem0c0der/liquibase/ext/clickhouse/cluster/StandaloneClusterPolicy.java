@@ -15,7 +15,7 @@
  */
 package io.github.mnem0c0der.liquibase.ext.clickhouse.cluster;
 
-/** Топология без репликации: DDL выполняется на одном узле, движки не переписываются. */
+/** Non-replicated topology: DDL runs on a single node and engines are left unchanged. */
 public final class StandaloneClusterPolicy implements ClusterPolicy {
 
   public static final ClusterPolicy INSTANCE = new StandaloneClusterPolicy();

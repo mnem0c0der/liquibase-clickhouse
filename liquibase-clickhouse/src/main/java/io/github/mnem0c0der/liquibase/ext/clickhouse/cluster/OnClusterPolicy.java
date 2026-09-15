@@ -19,11 +19,11 @@ import io.github.mnem0c0der.liquibase.ext.clickhouse.sql.Identifiers;
 import java.util.Objects;
 
 /**
- * Кластерная топология: DDL выполняется через ON CLUSTER, а движки семейства MergeTree заменяются
- * на Replicated-аналоги.
+ * Clustered topology: DDL runs through {@code ON CLUSTER}, and MergeTree-family engines are
+ * replaced with their Replicated counterparts.
  *
- * <p>Replicated-движок принимает путь в Keeper и имя реплики ПЕРВЫМИ аргументами, поэтому
- * существующие аргументы движка сдвигаются вправо, а не заменяются.
+ * <p>A Replicated engine takes the Keeper path and replica name as its first arguments, so existing
+ * engine arguments are shifted right rather than replaced.
  */
 public final class OnClusterPolicy implements ClusterPolicy {
 

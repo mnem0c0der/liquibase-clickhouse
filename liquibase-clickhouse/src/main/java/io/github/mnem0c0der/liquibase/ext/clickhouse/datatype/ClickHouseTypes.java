@@ -30,11 +30,11 @@ public final class ClickHouseTypes {
   private static final String LOW_CARDINALITY = "LowCardinality(";
 
   /**
-   * Оборачивает тип в {@code Nullable(...)}.
+   * Wraps a type in {@code Nullable(...)}.
    *
-   * <p>ClickHouse запрещает Nullable поверх Array и поверх уже нулевого типа, поэтому такие случаи
-   * возвращаются без изменений. Для LowCardinality единственная допустимая вложенность — {@code
-   * LowCardinality(Nullable(T))}, а не наоборот, поэтому обёртка уходит внутрь.
+   * <p>ClickHouse forbids {@code Nullable} over {@code Array} and over an already-nullable type, so
+   * those are returned unchanged. {@code LowCardinality(Nullable(T))} is the only legal nesting, so
+   * for {@code LowCardinality} the wrapper is applied to the inner type instead.
    */
   public static String nullable(String type) {
     String trimmed = type.trim();

@@ -29,10 +29,8 @@ import liquibase.sqlgenerator.core.AbstractSqlGenerator;
 import liquibase.statement.SqlStatement;
 
 /**
- * Общая база всех ClickHouse-генераторов.
- *
- * <p>Берёт на себя приоритет, отбор по типу БД и доступ к текущей топологии, чтобы конкретные
- * генераторы занимались исключительно своим оператором.
+ * Base class for all ClickHouse SQL generators: handles priority, database matching, and access to
+ * the current cluster topology, so subclasses only deal with their own statement.
  */
 public abstract class AbstractClickHouseSqlGenerator<T extends SqlStatement>
     extends AbstractSqlGenerator<T> {
@@ -61,8 +59,8 @@ public abstract class AbstractClickHouseSqlGenerator<T extends SqlStatement>
   }
 
   /**
-   * Возвращает имя таблицы, уточнённое базой ClickHouse. Схемы в ClickHouse нет, поэтому в имени не
-   * более двух частей.
+   * Returns the table name qualified by catalog. ClickHouse has no schema, so the name has at most
+   * two parts.
    */
   protected String qualifiedTableName(Database database, String catalogName, String tableName) {
     String catalog =

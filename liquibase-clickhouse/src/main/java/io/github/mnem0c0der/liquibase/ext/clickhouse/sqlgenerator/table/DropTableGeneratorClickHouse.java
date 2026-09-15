@@ -22,11 +22,10 @@ import liquibase.sqlgenerator.SqlGeneratorChain;
 import liquibase.statement.core.DropTableStatement;
 
 /**
- * Удаляет таблицу.
+ * Drops a table.
  *
- * <p>Флаг {@code cascadeConstraints} игнорируется осознанно: каскад существует ради внешних ключей,
- * которых в ClickHouse нет, поэтому каскадное и обычное удаление здесь неотличимы. Отказывать в
- * таком changeset бессмысленно — это сломало бы кросс-базовые changelog без всякой пользы.
+ * <p>{@code cascadeConstraints} is ignored: cascading exists for foreign keys, which ClickHouse
+ * does not have.
  */
 public class DropTableGeneratorClickHouse
     extends AbstractClickHouseSqlGenerator<DropTableStatement> {

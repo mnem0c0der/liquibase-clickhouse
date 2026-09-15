@@ -22,10 +22,10 @@ import java.util.List;
 import java.util.StringJoiner;
 
 /**
- * Собирает CREATE TABLE для ClickHouse.
+ * Builds a ClickHouse {@code CREATE TABLE} statement.
  *
- * <p>Порядок секций задан грамматикой ClickHouse и не является свободным: ENGINE, PRIMARY KEY,
- * ORDER BY, PARTITION BY, TTL, SETTINGS, COMMENT.
+ * <p>Clause order is fixed by ClickHouse's grammar, not by preference: ENGINE, PRIMARY KEY, ORDER
+ * BY, PARTITION BY, TTL, SETTINGS, COMMENT.
  */
 public final class ClickHouseDdlBuilder {
 

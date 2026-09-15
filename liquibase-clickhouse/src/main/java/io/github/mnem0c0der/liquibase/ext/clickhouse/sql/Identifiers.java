@@ -15,7 +15,7 @@
  */
 package io.github.mnem0c0der.liquibase.ext.clickhouse.sql;
 
-/** Единственная точка квотирования идентификаторов и строковых литералов ClickHouse. */
+/** Quotes ClickHouse identifiers and string literals. */
 public final class Identifiers {
 
   private Identifiers() {}

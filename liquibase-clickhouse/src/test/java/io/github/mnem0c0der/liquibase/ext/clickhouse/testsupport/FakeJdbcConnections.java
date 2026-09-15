@@ -20,7 +20,7 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import liquibase.database.jvm.JdbcConnection;
 
-/** Создаёт JDBC-соединения-заглушки, отвечающие заданным именем продукта. */
+/** Creates fake JDBC connections that report a given database product name. */
 public final class FakeJdbcConnections {
 
   private FakeJdbcConnections() {}

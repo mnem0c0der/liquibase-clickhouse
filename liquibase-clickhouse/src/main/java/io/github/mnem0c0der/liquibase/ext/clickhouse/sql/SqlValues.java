@@ -18,7 +18,7 @@ package io.github.mnem0c0der.liquibase.ext.clickhouse.sql;
 import liquibase.database.Database;
 import liquibase.datatype.DataTypeFactory;
 
-/** Единая точка рендеринга значений в SQL-литералы. */
+/** Renders Java values as SQL literals. */
 public final class SqlValues {
 
   private SqlValues() {}

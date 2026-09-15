@@ -19,10 +19,8 @@ import liquibase.configuration.AutoloadedConfigurations;
 import liquibase.configuration.ConfigurationDefinition;
 
 /**
- * Настройки расширения.
- *
- * <p>Каждый ключ объявлен ровно один раз. Liquibase сам делает его доступным через
- * liquibase.properties, системные свойства, переменные окружения и CLI.
+ * Configuration for the extension. Each key is declared once; Liquibase exposes it through
+ * liquibase.properties, system properties, environment variables, and the CLI.
  */
 public final class ClickHouseConfiguration implements AutoloadedConfigurations {
 

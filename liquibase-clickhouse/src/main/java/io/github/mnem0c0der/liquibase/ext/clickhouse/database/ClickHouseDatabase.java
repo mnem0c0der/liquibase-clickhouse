@@ -22,11 +22,10 @@ import liquibase.structure.DatabaseObject;
 import liquibase.structure.core.Schema;
 
 /**
- * Liquibase-описание ClickHouse.
+ * Liquibase {@link liquibase.database.Database} implementation for ClickHouse.
  *
- * <p>Класс сознательно объявляет отсутствие возможностей, которых в движке нет (транзакционный DDL,
- * последовательности, внешние ключи), вместо того чтобы позволять Liquibase генерировать SQL,
- * который ClickHouse не примет.
+ * <p>Declares the capabilities ClickHouse lacks (transactional DDL, sequences, foreign keys) so
+ * that Liquibase does not generate SQL ClickHouse would reject.
  */
 public class ClickHouseDatabase extends AbstractJdbcDatabase {
 

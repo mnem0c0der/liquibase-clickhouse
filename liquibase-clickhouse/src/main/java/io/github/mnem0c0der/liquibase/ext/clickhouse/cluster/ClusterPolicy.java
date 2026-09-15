@@ -15,14 +15,16 @@
  */
 package io.github.mnem0c0der.liquibase.ext.clickhouse.cluster;
 
-/** Решает два кластерных вопроса: нужен ли ON CLUSTER и нужен ли Replicated-движок. */
+/**
+ * Decides whether DDL needs {@code ON CLUSTER} and whether an engine needs a Replicated variant.
+ */
 public interface ClusterPolicy {
 
   boolean isClustered();
 
-  /** Либо пустая строка, либо готовый к подстановке фрагмент вида {@code " ON CLUSTER `name`"}. */
+  /** Empty string, or a ready-to-insert {@code " ON CLUSTER `name`"} fragment. */
   String onClusterClause();
 
-  /** Возвращает движок, пригодный для текущей топологии. */
+  /** Returns the engine to use for the current topology. */
   String resolveEngine(String requestedEngine);
 }

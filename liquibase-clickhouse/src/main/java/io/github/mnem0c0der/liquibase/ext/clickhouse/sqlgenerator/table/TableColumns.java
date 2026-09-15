@@ -19,14 +19,14 @@ import io.github.mnem0c0der.liquibase.ext.clickhouse.datatype.ClickHouseTypes;
 import liquibase.database.Database;
 import liquibase.statement.core.CreateTableStatement;
 
-/** Приведение колонок Liquibase к колонкам ClickHouse. */
+/** Renders Liquibase column definitions as ClickHouse column types. */
 final class TableColumns {
 
   private TableColumns() {}
 
   /**
-   * В ClickHouse колонка по умолчанию NOT NULL — обратно SQL-стандарту. Поэтому всё, что не
-   * объявлено NOT NULL явно, оборачивается в Nullable.
+   * ClickHouse columns are {@code NOT NULL} by default, the opposite of the SQL standard, so
+   * anything not explicitly declared {@code NOT NULL} is wrapped in {@code Nullable}.
    */
   static String renderType(CreateTableStatement statement, String columnName, Database database) {
     String type = statement.getColumnTypes().get(columnName).toDatabaseDataType(database).toSql();

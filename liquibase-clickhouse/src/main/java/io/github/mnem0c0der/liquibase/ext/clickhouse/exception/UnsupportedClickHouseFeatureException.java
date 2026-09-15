@@ -18,10 +18,10 @@ package io.github.mnem0c0der.liquibase.ext.clickhouse.exception;
 import liquibase.exception.UnexpectedLiquibaseException;
 
 /**
- * Бросается, когда changeset требует того, чего в ClickHouse нет.
+ * Thrown when a changeset requires something ClickHouse does not support.
  *
- * <p>Расширение сознательно падает вместо генерации SQL, который сервер отвергнет или, хуже, примет
- * с другим смыслом. В сообщении всегда указывается работающая альтернатива.
+ * <p>The extension refuses rather than emitting SQL the server would reject or, worse, accept with
+ * a different meaning. The message always names a working alternative.
  */
 public class UnsupportedClickHouseFeatureException extends UnexpectedLiquibaseException {
 
