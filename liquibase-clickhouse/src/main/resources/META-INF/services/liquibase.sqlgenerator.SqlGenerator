@@ -4,3 +4,6 @@ io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.column.AddColumnGener
 io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.column.DropColumnGeneratorClickHouse
 io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.column.RenameColumnGeneratorClickHouse
 io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.column.ModifyDataTypeGeneratorClickHouse
+io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.table.RenameTableGeneratorClickHouse
+io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.index.CreateIndexGeneratorClickHouse
+io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.index.DropIndexGeneratorClickHouse
