@@ -46,10 +46,26 @@ public class InsertSetGeneratorClickHouse
       return sql();
     }
 
+    List<String> expectedColumns = List.copyOf(rows.get(0).getColumnValues().keySet());
+    String tableName =
+        qualifiedTableName(database, statement.getCatalogName(), statement.getTableName());
+    for (int i = 1; i < rows.size(); i++) {
+      List<String> rowColumns = List.copyOf(rows.get(i).getColumnValues().keySet());
+      if (!rowColumns.equals(expectedColumns)) {
+        throw new IllegalStateException(
+            "Cannot batch insert into "
+                + tableName
+                + ": row "
+                + i
+                + " has columns "
+                + rowColumns
+                + " but the first row has "
+                + expectedColumns);
+      }
+    }
+
     String columns =
-        rows.get(0).getColumnValues().keySet().stream()
-            .map(Identifiers::quote)
-            .collect(Collectors.joining(", "));
+        expectedColumns.stream().map(Identifiers::quote).collect(Collectors.joining(", "));
 
     String values =
         rows.stream()
@@ -60,12 +76,6 @@ public class InsertSetGeneratorClickHouse
                         .collect(Collectors.joining(", ", "(", ")")))
             .collect(Collectors.joining(", "));
 
-    return sql(
-        "INSERT INTO "
-            + qualifiedTableName(database, statement.getCatalogName(), statement.getTableName())
-            + " ("
-            + columns
-            + ") VALUES "
-            + values);
+    return sql("INSERT INTO " + tableName + " (" + columns + ") VALUES " + values);
   }
 }

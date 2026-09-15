@@ -17,6 +17,8 @@ package io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.changelog;
 
 import io.github.mnem0c0der.liquibase.ext.clickhouse.changelog.ChangeLogTable;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.AbstractClickHouseSqlGenerator;
+import java.util.Map;
+import java.util.stream.Collectors;
 import liquibase.database.Database;
 import liquibase.sql.Sql;
 import liquibase.sqlgenerator.SqlGeneratorChain;
@@ -32,32 +34,33 @@ import liquibase.statement.core.CreateDatabaseChangeLogTableStatement;
 public class CreateDatabaseChangeLogTableGeneratorClickHouse
     extends AbstractClickHouseSqlGenerator<CreateDatabaseChangeLogTableStatement> {
 
+  private static final Map<String, String> COLUMN_TYPES =
+      Map.ofEntries(
+          Map.entry("ID", "String"),
+          Map.entry("AUTHOR", "String"),
+          Map.entry("FILENAME", "String"),
+          Map.entry("DATEEXECUTED", "DateTime64(3)"),
+          Map.entry("ORDEREXECUTED", "Int32"),
+          Map.entry("EXECTYPE", "String"),
+          Map.entry("MD5SUM", "Nullable(String)"),
+          Map.entry("DESCRIPTION", "Nullable(String)"),
+          Map.entry("COMMENTS", "Nullable(String)"),
+          Map.entry("LIQUIBASE", "Nullable(String)"),
+          Map.entry("CONTEXTS", "Nullable(String)"),
+          Map.entry("LABELS", "Nullable(String)"),
+          Map.entry("DEPLOYMENT_ID", "Nullable(String)"),
+          Map.entry("TAG", "Nullable(String)"),
+          Map.entry(
+              ChangeLogTable.ROW_VERSION_COLUMN,
+              "UInt64 DEFAULT toUnixTimestamp64Milli(now64(3))"));
+
+  // Built from ChangeLogTable.COLUMN_NAMES so the declaration can never drift out of sync with
+  // the explicit column list that TagDatabaseGeneratorClickHouse (and future re-insert
+  // generators) use to keep values lined up with the right column.
   private static final String COLUMNS =
-      String.join(
-          ", ",
-          "`ID` String",
-          "`AUTHOR` String",
-          "`FILENAME` String",
-          "`DATEEXECUTED` DateTime64(3)",
-          "`ORDEREXECUTED` Int32",
-          "`EXECTYPE` String",
-          "`MD5SUM` Nullable(String)",
-          "`DESCRIPTION` Nullable(String)",
-          "`COMMENTS` Nullable(String)",
-          "`LIQUIBASE` Nullable(String)",
-          "`CONTEXTS` Nullable(String)",
-          "`LABELS` Nullable(String)",
-          "`DEPLOYMENT_ID` Nullable(String)",
-          // TAG must stay immediately before ROWVERSION: TagDatabaseGeneratorClickHouse rebuilds
-          // both columns with `SELECT * EXCEPT (...)`, and ClickHouse appends re-added columns to
-          // the end of the select list in the order they are listed, so an INSERT ... SELECT with
-          // no explicit column list only lines up positionally if the table declares them the same
-          // way.
-          "`TAG` Nullable(String)",
-          "`"
-              + ChangeLogTable.ROW_VERSION_COLUMN
-              + "` UInt64"
-              + " DEFAULT toUnixTimestamp64Milli(now64(3))");
+      ChangeLogTable.COLUMN_NAMES.stream()
+          .map(name -> "`" + name + "` " + COLUMN_TYPES.get(name))
+          .collect(Collectors.joining(", "));
 
   @Override
   public Sql[] generateSql(

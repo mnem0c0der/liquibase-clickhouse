@@ -16,6 +16,7 @@
 package io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.mnem0c0der.liquibase.ext.clickhouse.database.ClickHouseDatabase;
 import java.util.Arrays;
@@ -53,10 +54,15 @@ class RemainingGeneratorsTest {
     String sql = generate(new TagDatabaseStatement("v1")).get(0);
 
     assertThat(sql)
-        .startsWith("INSERT INTO `analytics`.`DATABASECHANGELOG` SELECT * EXCEPT")
-        .contains("'v1' AS `TAG`")
-        .contains("FROM `analytics`.`DATABASECHANGELOG` FINAL")
-        .endsWith("ORDER BY `ORDEREXECUTED` DESC LIMIT 1")
+        .isEqualTo(
+            "INSERT INTO `analytics`.`DATABASECHANGELOG` (`ID`, `AUTHOR`, `FILENAME`,"
+                + " `DATEEXECUTED`, `ORDEREXECUTED`, `EXECTYPE`, `MD5SUM`, `DESCRIPTION`,"
+                + " `COMMENTS`, `LIQUIBASE`, `CONTEXTS`, `LABELS`, `DEPLOYMENT_ID`, `TAG`,"
+                + " `ROWVERSION`) SELECT `ID`, `AUTHOR`, `FILENAME`, `DATEEXECUTED`,"
+                + " `ORDEREXECUTED`, `EXECTYPE`, `MD5SUM`, `DESCRIPTION`, `COMMENTS`,"
+                + " `LIQUIBASE`, `CONTEXTS`, `LABELS`, `DEPLOYMENT_ID`, 'v1' AS `TAG`,"
+                + " toUnixTimestamp64Milli(now64(3)) AS `ROWVERSION` FROM"
+                + " `analytics`.`DATABASECHANGELOG` FINAL ORDER BY `ORDEREXECUTED` DESC LIMIT 1")
         .doesNotContainIgnoringCase("UPDATE");
   }
 
@@ -115,5 +121,31 @@ class RemainingGeneratorsTest {
     assertThat(generate(set))
         .containsExactly(
             "INSERT INTO `analytics`.`events` (`id`, `name`) VALUES (1, 'a'), (2, 'b')");
+  }
+
+  @Test
+  void rejectsABatchWhereALaterRowHasDifferentColumns() {
+    InsertSetStatement set = new InsertSetStatement("analytics", null, "events");
+
+    InsertStatement first = new InsertStatement("analytics", null, "events");
+    first.addColumnValue("id", 1L);
+    first.addColumnValue("name", "a");
+
+    InsertStatement second = new InsertStatement("analytics", null, "events");
+    second.addColumnValue("id", 2L);
+    second.addColumnValue("name", "b");
+
+    InsertStatement third = new InsertStatement("analytics", null, "events");
+    third.addColumnValue("id", 3L);
+    third.addColumnValue("country", "KZ");
+
+    set.addInsertStatement(first);
+    set.addInsertStatement(second);
+    set.addInsertStatement(third);
+
+    assertThatThrownBy(() -> generate(set))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("`analytics`.`events`")
+        .hasMessageContaining("row 2");
   }
 }

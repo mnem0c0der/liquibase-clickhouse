@@ -18,6 +18,7 @@ package io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.changelog;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.changelog.ChangeLogTable;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.sql.Identifiers;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.AbstractClickHouseSqlGenerator;
+import java.util.Map;
 import liquibase.database.Database;
 import liquibase.sql.Sql;
 import liquibase.sqlgenerator.SqlGeneratorChain;
@@ -26,8 +27,9 @@ import liquibase.statement.core.TagDatabaseStatement;
 /**
  * Tags the most recently applied changelog row.
  *
- * <p>The default generator issues an UPDATE, which ClickHouse does not have. Instead the latest row
- * is reinserted with a new tag and a higher version; FINAL keeps only that reinsert on read.
+ * <p>ClickHouse does have UPDATE (see UpdateGeneratorClickHouse), but it is a heavy asynchronous
+ * mutation. An insert is cheap, so the latest row is reinserted with a new tag and a higher version
+ * instead; FINAL keeps only that reinsert on read.
  */
 public class TagDatabaseGeneratorClickHouse
     extends AbstractClickHouseSqlGenerator<TagDatabaseStatement> {
@@ -39,17 +41,22 @@ public class TagDatabaseGeneratorClickHouse
       SqlGeneratorChain<TagDatabaseStatement> chain) {
 
     String table = ChangeLogTable.qualifiedName(database);
-    String versionColumn = "`" + ChangeLogTable.ROW_VERSION_COLUMN + "`";
+
+    String selectList =
+        ChangeLogTable.selectListWith(
+            Map.of(
+                "TAG",
+                Identifiers.literal(statement.getTag()),
+                ChangeLogTable.ROW_VERSION_COLUMN,
+                "toUnixTimestamp64Milli(now64(3))"));
 
     return sql(
         "INSERT INTO "
             + table
-            + " SELECT * EXCEPT ("
-            + versionColumn
-            + ", `TAG`), "
-            + Identifiers.literal(statement.getTag())
-            + " AS `TAG`, toUnixTimestamp64Milli(now64(3)) AS "
-            + versionColumn
+            + " ("
+            + ChangeLogTable.quotedColumnList()
+            + ") SELECT "
+            + selectList
             + " FROM "
             + table
             + " FINAL ORDER BY `ORDEREXECUTED` DESC LIMIT 1");
