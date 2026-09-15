@@ -17,6 +17,7 @@ package io.github.mnem0c0der.liquibase.ext.clickhouse.database;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.github.mnem0c0der.liquibase.ext.clickhouse.sql.Identifiers;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.testsupport.FakeJdbcConnections;
 import java.util.ServiceLoader;
 import liquibase.database.Database;
@@ -76,5 +77,29 @@ class ClickHouseDatabaseTest {
   void mapsClickHouseDatabasesToCatalogsRatherThanSchemas() {
     assertThat(database.supportsCatalogs()).isTrue();
     assertThat(database.supportsSchemas()).isFalse();
+  }
+
+  @Test
+  void escapesTrailingBackslashesSoTheLiteralDoesNotTruncate() {
+    assertThat(database.escapeStringForDatabase("C:\\")).isEqualTo("C:\\\\");
+  }
+
+  @Test
+  void escapesEmbeddedQuotesTheSameWayAsIdentifiersLiteral() {
+    assertThat(database.escapeStringForDatabase("it's")).isEqualTo("it\\'s");
+  }
+
+  @Test
+  void agreesWithIdentifiersLiteralOnTheEscapedBody() {
+    String value = "back\\slash 'n quote";
+    String literal = Identifiers.literal(value);
+    String bodyFromLiteral = literal.substring(1, literal.length() - 1);
+
+    assertThat(database.escapeStringForDatabase(value)).isEqualTo(bodyFromLiteral);
+  }
+
+  @Test
+  void returnsNullUnchanged() {
+    assertThat(database.escapeStringForDatabase(null)).isNull();
   }
 }

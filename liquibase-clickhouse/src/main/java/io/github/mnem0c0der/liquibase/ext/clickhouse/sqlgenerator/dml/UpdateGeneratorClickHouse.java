@@ -51,7 +51,11 @@ public class UpdateGeneratorClickHouse extends AbstractClickHouseSqlGenerator<Up
             + " UPDATE "
             + assignments
             + " WHERE "
-            + Mutations.whereOrTautology(statement.getWhereClause())
+            + Mutations.whereOrTautology(
+                database,
+                statement.getWhereClause(),
+                statement.getWhereColumnNames(),
+                statement.getWhereParameters())
             + Mutations.synchronousSettings());
   }
 }

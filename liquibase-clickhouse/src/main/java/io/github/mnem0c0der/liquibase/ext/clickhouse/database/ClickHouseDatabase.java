@@ -15,6 +15,7 @@
  */
 package io.github.mnem0c0der.liquibase.ext.clickhouse.database;
 
+import io.github.mnem0c0der.liquibase.ext.clickhouse.sql.Identifiers;
 import liquibase.database.AbstractJdbcDatabase;
 import liquibase.database.DatabaseConnection;
 import liquibase.exception.DatabaseException;
@@ -177,5 +178,13 @@ public class ClickHouseDatabase extends AbstractJdbcDatabase {
   @Override
   protected String getQuotingEndReplacement() {
     return "\\`";
+  }
+
+  @Override
+  public String escapeStringForDatabase(String string) {
+    // ClickHouse treats \ as an escape character inside string literals; the inherited
+    // SQL-standard implementation only doubles quotes and leaves a trailing backslash
+    // unescaped, which truncates the literal.
+    return string == null ? null : Identifiers.escapeStringBody(string);
   }
 }

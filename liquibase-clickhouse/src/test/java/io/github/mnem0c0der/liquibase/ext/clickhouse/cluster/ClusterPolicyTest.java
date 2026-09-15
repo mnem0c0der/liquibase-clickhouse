@@ -157,5 +157,16 @@ class ClusterPolicyTest {
     void escapesABackslashAlreadyPresentInTheInput() {
       assertThat(Identifiers.quote("back\\slash")).isEqualTo("`back\\\\slash`");
     }
+
+    @Test
+    void escapesATrailingBackslashInAStringLiteralSoItDoesNotTruncate() {
+      assertThat(Identifiers.literal("C:\\")).isEqualTo("'C:\\\\'");
+    }
+
+    @Test
+    void escapesBothBackslashesAndQuotesInAStringLiteral() {
+      assertThat(Identifiers.literal("back\\slash 'n quote"))
+          .isEqualTo("'back\\\\slash \\'n quote'");
+    }
   }
 }

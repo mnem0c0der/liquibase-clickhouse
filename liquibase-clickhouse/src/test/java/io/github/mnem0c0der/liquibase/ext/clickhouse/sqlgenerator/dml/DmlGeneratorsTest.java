@@ -77,4 +77,27 @@ class DmlGeneratorsTest {
         .containsExactly(
             "ALTER TABLE `analytics`.`events` DELETE WHERE id = 1 SETTINGS mutations_sync = 2");
   }
+
+  @Test
+  void substitutesWhereParamsPlaceholdersOnUpdate() {
+    UpdateStatement statement = new UpdateStatement("analytics", null, "events");
+    statement.addNewColumnValue("name", "renamed");
+    statement.setWhereClause("id = ? AND name = ?");
+    statement.addWhereParameters(1L, "launch");
+
+    String sql = generate(statement).get(0);
+
+    assertThat(sql).contains("WHERE id = 1 AND name = 'launch'").doesNotContain("?");
+  }
+
+  @Test
+  void substitutesWhereParamsPlaceholdersOnDelete() {
+    DeleteStatement statement = new DeleteStatement("analytics", null, "events");
+    statement.setWhere("id = ? AND name = ?");
+    statement.addWhereParameters(1L, "launch");
+
+    String sql = generate(statement).get(0);
+
+    assertThat(sql).contains("DELETE WHERE id = 1 AND name = 'launch'").doesNotContain("?");
+  }
 }

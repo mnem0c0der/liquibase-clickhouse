@@ -37,7 +37,11 @@ public class DeleteGeneratorClickHouse extends AbstractClickHouseSqlGenerator<De
             + qualifiedTableName(database, statement.getCatalogName(), statement.getTableName())
             + clusterPolicy().onClusterClause()
             + " DELETE WHERE "
-            + Mutations.whereOrTautology(statement.getWhere())
+            + Mutations.whereOrTautology(
+                database,
+                statement.getWhere(),
+                statement.getWhereColumnNames(),
+                statement.getWhereParameters())
             + Mutations.synchronousSettings());
   }
 }

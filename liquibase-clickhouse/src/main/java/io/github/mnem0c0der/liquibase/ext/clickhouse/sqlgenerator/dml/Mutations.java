@@ -16,6 +16,9 @@
 package io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.dml;
 
 import io.github.mnem0c0der.liquibase.ext.clickhouse.config.ClickHouseConfiguration;
+import java.util.List;
+import liquibase.database.Database;
+import liquibase.util.SqlUtil;
 
 /** Shared logic for UPDATE and DELETE mutations: ClickHouse requires WHERE and async settings. */
 final class Mutations {
@@ -24,8 +27,17 @@ final class Mutations {
 
   private Mutations() {}
 
-  static String whereOrTautology(String whereClause) {
-    return whereClause == null || whereClause.isBlank() ? TAUTOLOGY : whereClause;
+  /**
+   * Resolves a where clause to a tautology when absent, otherwise substitutes the {@code :name} and
+   * {@code ?}/{@code :value} placeholders a changeset's {@code <whereParams>} produces.
+   */
+  static String whereOrTautology(
+      Database database, String whereClause, List<String> columnNames, List<Object> parameters) {
+
+    if (whereClause == null || whereClause.isBlank()) {
+      return TAUTOLOGY;
+    }
+    return SqlUtil.replacePredicatePlaceholders(database, whereClause, columnNames, parameters);
   }
 
   static String synchronousSettings() {

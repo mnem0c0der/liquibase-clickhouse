@@ -24,7 +24,12 @@ public final class Identifiers {
     return "`" + identifier.replace("\\", "\\\\").replace("`", "\\`") + "`";
   }
 
+  /** Escapes the body of a single-quoted ClickHouse string literal, without the quotes. */
+  public static String escapeStringBody(String value) {
+    return value.replace("\\", "\\\\").replace("'", "\\'");
+  }
+
   public static String literal(String value) {
-    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'";
+    return "'" + escapeStringBody(value) + "'";
   }
 }
