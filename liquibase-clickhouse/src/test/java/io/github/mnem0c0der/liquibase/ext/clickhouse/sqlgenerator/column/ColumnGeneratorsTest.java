@@ -16,13 +16,16 @@
 package io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.column;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.mnem0c0der.liquibase.ext.clickhouse.database.ClickHouseDatabase;
+import io.github.mnem0c0der.liquibase.ext.clickhouse.exception.UnsupportedClickHouseFeatureException;
 import java.util.Arrays;
 import java.util.List;
 import liquibase.database.Database;
 import liquibase.sql.Sql;
 import liquibase.sqlgenerator.SqlGeneratorFactory;
+import liquibase.statement.AutoIncrementConstraint;
 import liquibase.statement.SqlStatement;
 import liquibase.statement.core.AddColumnStatement;
 import liquibase.statement.core.DropColumnStatement;
@@ -78,9 +81,44 @@ class ColumnGeneratorsTest {
   }
 
   @Test
+  void refusesAnAutoIncrementColumn() {
+    AddColumnStatement statement =
+        new AddColumnStatement(
+            "analytics", null, "events", "id", "bigint", null, new AutoIncrementConstraint("id"));
+
+    assertThatThrownBy(() -> generate(statement))
+        .isInstanceOf(UnsupportedClickHouseFeatureException.class)
+        .hasMessageContaining("generateUUIDv4");
+  }
+
+  @Test
+  void refusesAnAutoIncrementColumnEvenAsTheSecondColumnOfAComposite() {
+    AddColumnStatement first =
+        new AddColumnStatement("analytics", null, "events", "a", "int", null);
+    AddColumnStatement second =
+        new AddColumnStatement(
+            "analytics", null, "events", "id", "bigint", null, new AutoIncrementConstraint("id"));
+
+    assertThatThrownBy(() -> generate(new AddColumnStatement(first, second)))
+        .isInstanceOf(UnsupportedClickHouseFeatureException.class)
+        .hasMessageContaining("generateUUIDv4");
+  }
+
+  @Test
   void dropsAColumn() {
     assertThat(generate(new DropColumnStatement("analytics", null, "events", "country")))
         .containsExactly("ALTER TABLE `analytics`.`events` DROP COLUMN `country`");
+  }
+
+  @Test
+  void expandsACompositeDropColumnIntoSeparateStatements() {
+    DropColumnStatement first = new DropColumnStatement("analytics", null, "events", "a");
+    DropColumnStatement second = new DropColumnStatement("analytics", null, "events", "b");
+
+    assertThat(generate(new DropColumnStatement(List.of(first, second))))
+        .containsExactly(
+            "ALTER TABLE `analytics`.`events` DROP COLUMN `a`",
+            "ALTER TABLE `analytics`.`events` DROP COLUMN `b`");
   }
 
   @Test
@@ -95,6 +133,9 @@ class ColumnGeneratorsTest {
 
   @Test
   void modifiesAColumnType() {
+    // ColumnNullability needs a live ClickHouse connection to read the column's current
+    // nullability back; here the lookup finds nothing and the generator falls back to
+    // Nullable. The not-null-preserving path is covered by the integration tests.
     assertThat(
             generate(
                 new ModifyDataTypeStatement("analytics", null, "events", "country", "varchar(8)")))
