@@ -2172,7 +2172,7 @@ class CreateTableGeneratorClickHouseTest {
   }
 
   @Test
-  void usesThePrimaryKeyAsTheSortingKey() {
+  void usesThePrimaryKeyAsTheSortingKeyWithoutDuplicatingTheColumn() {
     CreateTableStatement statement = events();
     statement.addPrimaryKeyColumn(
         "id",
@@ -2182,8 +2182,28 @@ class CreateTableGeneratorClickHouseTest {
         null);
 
     assertThat(generate(statement))
-        .contains("PRIMARY KEY (`id`)")
-        .contains("ORDER BY (`id`)");
+        .isEqualTo(
+            "CREATE TABLE `analytics`.`events` "
+                + "(`id` Int64, `name` Nullable(String)) "
+                + "ENGINE = MergeTree PRIMARY KEY (`id`) ORDER BY (`id`)");
+  }
+
+  @Test
+  void rendersAColumnDefault() {
+    CreateTableStatement statement = new CreateTableStatement("analytics", null, "events");
+    statement.addColumn(
+        "name",
+        liquibase.datatype.DataTypeFactory.getInstance().fromDescription("varchar(50)", database),
+        "unknown");
+
+    assertThat(generate(statement))
+        .contains("`name` Nullable(String) DEFAULT 'unknown'");
+  }
+
+  @Test
+  void dropsATableTheSameWayWhetherOrNotCascadeWasRequested() {
+    assertThat(generate(new DropTableStatement("analytics", null, "events", true)))
+        .isEqualTo(generate(new DropTableStatement("analytics", null, "events", false)));
   }
 
   @Test
@@ -2238,6 +2258,7 @@ import io.github.mnem0c0der.liquibase.ext.clickhouse.sql.ClickHouseDdlBuilder;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.sql.Identifiers;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.sql.SqlValues;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.AbstractClickHouseSqlGenerator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import liquibase.database.Database;
 import liquibase.sql.Sql;
@@ -2257,7 +2278,9 @@ public class CreateTableGeneratorClickHouse
             .onCluster(clusterPolicy())
             .engine(ClickHouseConfiguration.TABLE_ENGINE.getCurrentValue());
 
-    for (String columnName : statement.getColumns()) {
+    // getColumns() is a raw list: a column registered through both addColumn and
+    // addPrimaryKeyColumn appears twice, which would emit a duplicate definition.
+    for (String columnName : new LinkedHashSet<>(statement.getColumns())) {
       String type = TableColumns.renderType(statement, columnName, database);
       Object defaultValue = statement.getDefaultValue(columnName);
 
@@ -2327,6 +2350,14 @@ import liquibase.sql.Sql;
 import liquibase.sqlgenerator.SqlGeneratorChain;
 import liquibase.statement.core.DropTableStatement;
 
+/**
+ * Удаляет таблицу.
+ *
+ * <p>Флаг {@code cascadeConstraints} игнорируется осознанно: каскад существует ради внешних
+ * ключей, которых в ClickHouse нет, поэтому каскадное и обычное удаление здесь неотличимы.
+ * Отказывать в таком changeset бессмысленно — это сломало бы кросс-базовые changelog без всякой
+ * пользы.
+ */
 public class DropTableGeneratorClickHouse
     extends AbstractClickHouseSqlGenerator<DropTableStatement> {
 
