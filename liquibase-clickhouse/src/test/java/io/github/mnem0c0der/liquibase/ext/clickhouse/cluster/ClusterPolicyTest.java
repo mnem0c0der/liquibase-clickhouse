@@ -16,6 +16,7 @@
 package io.github.mnem0c0der.liquibase.ext.clickhouse.cluster;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.mnem0c0der.liquibase.ext.clickhouse.config.ClickHouseConfiguration;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.sql.Identifiers;
@@ -86,6 +87,22 @@ class ClusterPolicyTest {
       assertThat(policy.resolveEngine("Memory")).isEqualTo("Memory");
       assertThat(policy.resolveEngine("Null")).isEqualTo("Null");
     }
+
+    @Test
+    void rejectsAnEngineWithAnUnclosedParenthesis() {
+      assertThatThrownBy(() -> policy.resolveEngine("MergeTree("))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("MergeTree(")
+          .hasMessageContaining("close its parenthesis");
+    }
+
+    @Test
+    void trimsSurroundingWhitespaceTheSameWayForRewrittenAndPassThroughEngines() {
+      assertThat(policy.resolveEngine("  MergeTree  "))
+          .isEqualTo(
+              "ReplicatedMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')");
+      assertThat(policy.resolveEngine("  Memory  ")).isEqualTo("Memory");
+    }
   }
 
   @Nested
@@ -134,6 +151,11 @@ class ClusterPolicyTest {
     @Test
     void escapesQuotesInsideStringLiterals() {
       assertThat(Identifiers.literal("it's")).isEqualTo("'it\\'s'");
+    }
+
+    @Test
+    void escapesABackslashAlreadyPresentInTheInput() {
+      assertThat(Identifiers.quote("back\\slash")).isEqualTo("`back\\\\slash`");
     }
   }
 }
