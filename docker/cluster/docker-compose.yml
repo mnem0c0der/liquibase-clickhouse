@@ -1,0 +1,94 @@
+services:
+  ch-keeper:
+    image: clickhouse/clickhouse-keeper:26.8
+    volumes:
+      - ./config/keeper.xml:/etc/clickhouse-keeper/keeper_config.xml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-keeper-client -q ruok | grep -q imok"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  ch-s1r1:
+    image: clickhouse/clickhouse-server:26.8
+    depends_on:
+      ch-keeper:
+        condition: service_healthy
+    ports:
+      - "8123"
+    volumes:
+      - ./config/common.xml:/etc/clickhouse-server/config.d/common.xml:ro
+      - ./config/macros/s1r1.xml:/etc/clickhouse-server/config.d/macros.xml:ro
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  ch-s1r2:
+    image: clickhouse/clickhouse-server:26.8
+    depends_on:
+      ch-keeper:
+        condition: service_healthy
+    ports:
+      - "8123"
+    volumes:
+      - ./config/common.xml:/etc/clickhouse-server/config.d/common.xml:ro
+      - ./config/macros/s1r2.xml:/etc/clickhouse-server/config.d/macros.xml:ro
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  ch-s2r1:
+    image: clickhouse/clickhouse-server:26.8
+    depends_on:
+      ch-keeper:
+        condition: service_healthy
+    ports:
+      - "8123"
+    volumes:
+      - ./config/common.xml:/etc/clickhouse-server/config.d/common.xml:ro
+      - ./config/macros/s2r1.xml:/etc/clickhouse-server/config.d/macros.xml:ro
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  ch-s2r2:
+    image: clickhouse/clickhouse-server:26.8
+    depends_on:
+      ch-keeper:
+        condition: service_healthy
+    ports:
+      - "8123"
+    volumes:
+      - ./config/common.xml:/etc/clickhouse-server/config.d/common.xml:ro
+      - ./config/macros/s2r2.xml:/etc/clickhouse-server/config.d/macros.xml:ro
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30

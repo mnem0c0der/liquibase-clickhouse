@@ -35,7 +35,7 @@ import liquibase.statement.core.RawSqlStatement;
  * new row with a higher version, and a ReplacingMergeTree read with FINAL keeps only the latest
  * version per lockId. On a replicated table a lagging read could let two contenders each see
  * themselves as the winner, so writes carry {@code insert_quorum = 'auto'} with {@code
- * insert_quorum_parallel = 0} and reads carry {@code select_sequential_consistency = 1}; both apply
+ * insert_quorum_parallel = 1} and reads carry {@code select_sequential_consistency = 1}; both apply
  * only to this table's own statements, and only when {@link ClusterPolicy#isClustered()}.
  *
  * <p>Every {@code LOCKCLAIMED} and {@code LOCKRENEWED} value is written by ClickHouse itself
@@ -52,9 +52,25 @@ public final class LockRepository implements LockStore {
   /**
    * {@code 'auto'} waits for a majority of replicas rather than a fixed count, because this
    * repository has no way to know how many replicas the cluster actually has.
+   *
+   * <p>{@code insert_quorum_parallel = 1} is required, not optional: this table is written
+   * concurrently by every contender racing for the lock, and with the default {@code
+   * insert_quorum_parallel = 0} ClickHouse allows only one in-flight quorum insert per table at a
+   * time &mdash; a second contender's claim is rejected outright with {@code
+   * UNSATISFIED_QUORUM_FOR_PREVIOUS_WRITE} instead of being queued. Parallel quorum inserts relax
+   * only the ordering of unrelated rows becoming visible relative to each other; each individual
+   * insert still waits for its own majority acknowledgement before returning, which is the only
+   * guarantee {@link OptimisticLockArbiter} depends on (it never assumes insertion order across
+   * different lock ids).
+   *
+   * <p>{@code async_insert = 0} is required too: recent ClickHouse servers default {@code
+   * async_insert} to on, and a quorum insert through the async path refuses to run at all unless
+   * {@code insert_quorum_parallel} is enabled ({@code UNSUPPORTED_PARAMETER}) &mdash; satisfied
+   * here, but the async path buffers writes rather than confirming them immediately, which this
+   * repository's single-row claim/renew/release inserts have no use for.
    */
   private static final String WRITE_CONSISTENCY_SETTINGS =
-      " SETTINGS insert_quorum = 'auto', insert_quorum_parallel = 0";
+      " SETTINGS insert_quorum = 'auto', insert_quorum_parallel = 1, async_insert = 0";
 
   private static final String READ_CONSISTENCY_SETTINGS =
       " SETTINGS select_sequential_consistency = 1";
@@ -92,14 +108,15 @@ public final class LockRepository implements LockStore {
         "INSERT INTO "
             + qualifiedName()
             + " (`ID`, `LOCKID`, `LOCKED`, `LOCKCLAIMED`, `LOCKRENEWED`, `LOCKEDBY`,"
-            + " `LOCKVERSION`) VALUES (1, "
+            + " `LOCKVERSION`)"
+            + writeConsistencySettings()
+            + " VALUES (1, "
             + Identifiers.literal(lockId)
             + ", 1, now64(3), now64(3), "
             + Identifiers.literal(lockedBy)
             + ", "
             + version
-            + ")"
-            + writeConsistencySettings());
+            + ")");
   }
 
   /**
@@ -130,7 +147,9 @@ public final class LockRepository implements LockStore {
         "INSERT INTO "
             + qualifiedName()
             + " (`ID`, `LOCKID`, `LOCKED`, `LOCKCLAIMED`, `LOCKRENEWED`, `LOCKEDBY`,"
-            + " `LOCKVERSION`) VALUES (1, "
+            + " `LOCKVERSION`)"
+            + writeConsistencySettings()
+            + " VALUES (1, "
             + Identifiers.literal(lockId)
             + ", "
             + (locked ? 1 : 0)
@@ -140,8 +159,7 @@ public final class LockRepository implements LockStore {
             + Identifiers.literal(lockedBy)
             + ", "
             + version
-            + ")"
-            + writeConsistencySettings());
+            + ")");
   }
 
   /**

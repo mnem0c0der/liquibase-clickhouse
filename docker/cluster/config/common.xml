@@ -1,0 +1,20 @@
+<clickhouse>
+  <remote_servers>
+    <analytics_cluster>
+      <shard>
+        <internal_replication>true</internal_replication>
+        <replica><host>ch-s1r1</host><port>9000</port></replica>
+        <replica><host>ch-s1r2</host><port>9000</port></replica>
+      </shard>
+      <shard>
+        <internal_replication>true</internal_replication>
+        <replica><host>ch-s2r1</host><port>9000</port></replica>
+        <replica><host>ch-s2r2</host><port>9000</port></replica>
+      </shard>
+    </analytics_cluster>
+  </remote_servers>
+
+  <zookeeper>
+    <node><host>ch-keeper</host><port>9181</port></node>
+  </zookeeper>
+</clickhouse>
