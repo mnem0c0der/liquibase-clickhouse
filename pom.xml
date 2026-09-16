@@ -6,7 +6,7 @@
 
   <groupId>io.github.mnem0c0der</groupId>
   <artifactId>liquibase-clickhouse-parent</artifactId>
-  <version>1.0.0-SNAPSHOT</version>
+  <version>1.0.0</version>
   <packaging>pom</packaging>
 
   <name>liquibase-clickhouse parent</name>
