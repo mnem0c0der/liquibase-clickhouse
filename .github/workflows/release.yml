@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          server-id: central
+          server-username: CENTRAL_TOKEN_USERNAME
+          server-password: CENTRAL_TOKEN_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: GPG_PASSPHRASE
+
+      - name: Verify the tag matches the project version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(mvn -B -ntp -q -DforceStdout help:evaluate -Dexpression=project.version)
+          if [ "$tag" != "$version" ]; then
+            echo "Tag $tag does not match project version $version"
+            exit 1
+          fi
+
+      - name: Build, test and publish
+        run: mvn -B -ntp clean deploy -Prelease -pl liquibase-clickhouse -am -DskipTests=false
+        env:
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
