@@ -36,6 +36,7 @@
 
   <modules>
     <module>liquibase-clickhouse</module>
+    <module>liquibase-clickhouse-integration-tests</module>
   </modules>
 
   <properties>
