@@ -41,8 +41,11 @@ import liquibase.statement.core.RawSqlStatement;
  * <p>Every {@code LOCKCLAIMED} and {@code LOCKRENEWED} value is written by ClickHouse itself
  * ({@code now64(3)}), never by the calling host's own clock, so two contending hosts can never
  * disagree about a claim's age even if their local clocks have drifted apart.
+ *
+ * <p>Implements {@link LockStore}, the seam {@link ClickHouseLockService} depends on, so tests can
+ * substitute a fake in its place.
  */
-public final class LockRepository {
+public final class LockRepository implements LockStore {
 
   private static final String LOCK_TABLE = "DATABASECHANGELOGLOCK";
 
@@ -64,6 +67,7 @@ public final class LockRepository {
     this.clusterPolicy = clusterPolicy;
   }
 
+  @Override
   public void createTableIfMissing() throws DatabaseException {
     String engine = clusterPolicy.resolveEngine("ReplacingMergeTree(`LOCKVERSION`)");
 
@@ -82,6 +86,7 @@ public final class LockRepository {
    * Inserts a brand new claim. Both {@code LOCKCLAIMED} and {@code LOCKRENEWED} are the server's
    * current instant, since a fresh claim has not been renewed yet.
    */
+  @Override
   public void claim(String lockId, long version, String lockedBy) throws DatabaseException {
     execute(
         "INSERT INTO "
@@ -102,6 +107,7 @@ public final class LockRepository {
    * so precedence never shifts across renewals; {@code LOCKRENEWED} is the server's current
    * instant.
    */
+  @Override
   public void renew(String lockId, Instant claimedAt, long version, String lockedBy)
       throws DatabaseException {
     insertLockedState(lockId, true, claimedAt, version, lockedBy);
@@ -111,6 +117,7 @@ public final class LockRepository {
    * Inserts a release row. {@code claimedAt} is written back exactly as the caller read it, purely
    * for diagnostics: a release row is never a candidate for {@code currentHolder}.
    */
+  @Override
   public void release(String lockId, Instant claimedAt, long version, String lockedBy)
       throws DatabaseException {
     insertLockedState(lockId, false, claimedAt, version, lockedBy);
@@ -144,7 +151,11 @@ public final class LockRepository {
    * now64(3)}, no table scan) because the row query alone returns nothing to attach it to when the
    * table is empty.
    */
+  @Override
   public LockSnapshot readAll() throws DatabaseException {
+    // Reading the instant before the rows is safe even though the two are not atomic: any drift
+    // only makes the rows look newer than `now`, which biases staleness toward false negatives
+    // and so can never preempt a still-live holder.
     Instant serverNow = readServerNow();
 
     List<Map<String, ?>> rows =
@@ -185,6 +196,7 @@ public final class LockRepository {
    * Reads all rows itself before computing the version. Callers that already hold a fresh {@link
    * LockSnapshot} should call {@link #nextVersion(List)} instead to avoid a redundant round trip.
    */
+  @Override
   public long nextVersion() throws DatabaseException {
     return nextVersion(readAll().rows());
   }
@@ -197,12 +209,14 @@ public final class LockRepository {
    * client's own clock: {@code max(now, highest + 1)} is already monotonic against every version
    * this repository has seen, so a client with a fast clock cannot get ahead of that guarantee.
    */
+  @Override
   public long nextVersion(List<LockCandidate> rows) {
     long now = System.currentTimeMillis();
     long highest = rows.stream().mapToLong(LockCandidate::version).max().orElse(0L);
     return Math.max(now, highest + 1);
   }
 
+  @Override
   public void dropTable() throws DatabaseException {
     execute("DROP TABLE IF EXISTS " + qualifiedName() + clusterPolicy.onClusterClause());
   }

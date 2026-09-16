@@ -57,12 +57,13 @@ public class ClickHouseLockService implements LockService {
   /**
    * Bound on how long {@code stopHeartbeat()} waits for the heartbeat thread to actually exit. A
    * renewal is at most two lightweight round trips, so this is generous; if it is ever exceeded the
-   * thread is abandoned rather than blocking a release forever, and a warning names it.
+   * thread is abandoned rather than blocking a release forever, and a warning names it. Not final
+   * so a test can shrink it instead of forcing the join to actually wait out the real timeout.
    */
-  private static final long HEARTBEAT_STOP_TIMEOUT_MILLIS = Duration.ofSeconds(10).toMillis();
+  private long heartbeatStopTimeoutMillis = Duration.ofSeconds(10).toMillis();
 
   private Database database;
-  private LockRepository repository;
+  private LockStore repository;
   private OptimisticLockArbiter arbiter;
 
   private volatile boolean hasLock;
@@ -74,6 +75,11 @@ public class ClickHouseLockService implements LockService {
    * Set by {@code stopHeartbeat()} before it interrupts the heartbeat thread, so a renewal already
    * past its sleep and about to write can still back out instead of re-locking the table after the
    * release has been computed.
+   *
+   * <p>Only {@code startHeartbeat()} clears it, when a new heartbeat cycle actually begins. {@code
+   * stopHeartbeat()} must never clear it itself: if its join times out, the thread is still running
+   * and still needs to see this as true whenever it eventually reaches the check, not just for the
+   * duration of one join.
    */
   private volatile boolean heartbeatStopping;
 
@@ -152,6 +158,9 @@ public class ClickHouseLockService implements LockService {
         heldLockId = lockId;
         heldClaimedAt = claimedAt;
         warnIfPreempting(rows, now);
+        // Guards against leaking a previous heartbeat thread if this instance is reused for a
+        // second acquisition; ordinarily releaseLock()/reset() already stopped it.
+        stopHeartbeat();
         startHeartbeat(lockId, claimedAt);
         return true;
       }
@@ -232,6 +241,8 @@ public class ClickHouseLockService implements LockService {
     } catch (DatabaseException failure) {
       throw new LockException(failure);
     } finally {
+      // Cleared even if the read above threw: this host's heartbeat is already stopped, so if no
+      // release row was written the claim is simply left behind to age out on its own.
       hasLock = false;
       heldLockId = null;
       heldClaimedAt = null;
@@ -311,6 +322,24 @@ public class ClickHouseLockService implements LockService {
   /** Package-private for tests: the current heartbeat thread, or null if none is running. */
   Thread currentHeartbeatThread() {
     return heartbeatThread;
+  }
+
+  /**
+   * Package-private for tests: substitutes a fake {@link LockStore} so acquire, release, and
+   * heartbeat renewal can be driven deterministically, without a live ClickHouse server. Production
+   * wiring is unaffected; {@link #setDatabase(Database)} still builds a real {@link
+   * LockRepository}.
+   */
+  void setLockStoreForTesting(LockStore repository) {
+    this.repository = repository;
+  }
+
+  /**
+   * Package-private for tests: shrinks {@link #heartbeatStopTimeoutMillis} so a test that forces
+   * {@code stopHeartbeat()}'s join to time out does not slow the suite down.
+   */
+  void setHeartbeatStopTimeoutMillisForTesting(long heartbeatStopTimeoutMillis) {
+    this.heartbeatStopTimeoutMillis = heartbeatStopTimeoutMillis;
   }
 
   /**
@@ -405,7 +434,6 @@ public class ClickHouseLockService implements LockService {
    */
   void stopHeartbeat() {
     Thread thread = heartbeatThread;
-    heartbeatThread = null;
     if (thread == null) {
       return;
     }
@@ -413,21 +441,25 @@ public class ClickHouseLockService implements LockService {
     heartbeatStopping = true;
     try {
       thread.interrupt();
-      thread.join(HEARTBEAT_STOP_TIMEOUT_MILLIS);
+      thread.join(heartbeatStopTimeoutMillis);
       if (thread.isAlive()) {
+        // The thread is still running and still needs heartbeatStopping to read true whenever it
+        // eventually reaches the check, so it is not cleared here. heartbeatThread is also left in
+        // place, unset only once a join actually observes the thread dead, so a later
+        // stopHeartbeat() call (or acquireLock()'s pre-start call) can retry joining it.
         Scope.getCurrentScope()
             .getLog(ClickHouseLockService.class)
             .warning(
                 "Heartbeat thread "
                     + thread.getName()
                     + " did not stop within "
-                    + HEARTBEAT_STOP_TIMEOUT_MILLIS
+                    + heartbeatStopTimeoutMillis
                     + " ms; proceeding without waiting further.");
+      } else {
+        heartbeatThread = null;
       }
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
-    } finally {
-      heartbeatStopping = false;
     }
   }
 
