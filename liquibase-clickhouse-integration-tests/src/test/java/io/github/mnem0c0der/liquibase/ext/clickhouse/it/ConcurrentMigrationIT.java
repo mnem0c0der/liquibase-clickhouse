@@ -108,6 +108,16 @@ class ConcurrentMigrationIT {
       assertThat(seededRows)
           .as("the seeding changeset must have inserted exactly one row")
           .containsExactly("1");
+
+      List<String> heldLocks =
+          ClickHouseTestSupport.queryColumn(
+              connection, "SELECT count() FROM DATABASECHANGELOGLOCK FINAL WHERE LOCKED = 1");
+
+      assertThat(heldLocks)
+          .as(
+              "every winning migrator must have released its lock; a phantom held row is exactly"
+                  + " what the per-instance lock-state cache eviction used to leave behind")
+          .containsExactly("0");
     }
   }
 

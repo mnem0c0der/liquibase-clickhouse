@@ -22,11 +22,13 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.Date;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import liquibase.Scope;
 import liquibase.database.Database;
@@ -65,16 +67,20 @@ public class ClickHouseLockService implements LockService {
   private static final long WITHDRAW_RETRY_DELAY_MILLIS = 200L;
 
   /**
-   * Per-database lock state, keyed by object identity ({@link Database} declares no {@code
-   * equals}/{@code hashCode}, so the default identity semantics are exactly what is needed: two
-   * different connections must never share a slot). Survives {@code ClickHouseLockService}
-   * instances being discarded and recreated by Liquibase's own cache, so a claim made by one
-   * instance can always be released by whichever instance a later call is dispatched to. Entries
-   * are removed once a claim is fully resolved (released, force-released, or destroyed); a claim
-   * abandoned by a crashed JVM cannot leak past that JVM's own lifetime.
+   * State for locks currently held, keyed by object identity rather than {@link Database#equals}:
+   * {@code AbstractJdbcDatabase.equals}/{@code hashCode} derive from the database's JDBC {@code
+   * connection} field, which is mutable and null until a connection is attached, so equality-based
+   * keying could silently route the same logical database to two different map slots.
+   *
+   * <p>An entry exists only while its database currently holds (or is directly asserted to hold, by
+   * a test) the lock: it is created when a claim wins, or when locking is disabled, and removed on
+   * every terminal outcome (release, force release, reset, destroy). A contender that never wins
+   * leaves nothing behind. This also survives {@code ClickHouseLockService} instances being
+   * discarded and recreated by Liquibase's own cache, so a claim made by one instance can always be
+   * released by whichever instance a later call is dispatched to.
    */
-  private static final ConcurrentHashMap<Database, LockState> DATABASE_LOCKS =
-      new ConcurrentHashMap<>();
+  private static final Map<Database, LockState> DATABASE_LOCKS =
+      Collections.synchronizedMap(new IdentityHashMap<>());
 
   /** Mutable state for one database's currently held (or in-flight) claim. */
   private static final class LockState {
@@ -107,7 +113,6 @@ public class ClickHouseLockService implements LockService {
   private Database database;
   private LockStore repository;
   private OptimisticLockArbiter arbiter;
-  private LockState state;
 
   private long changeLogLockWaitMillis = Duration.ofMinutes(5).toMillis();
   private long changeLogLockRecheckMillis =
@@ -130,7 +135,6 @@ public class ClickHouseLockService implements LockService {
     this.arbiter =
         new OptimisticLockArbiter(
             Duration.ofSeconds(ClickHouseConfiguration.LOCK_TIMEOUT_SECONDS.getCurrentValue()));
-    this.state = DATABASE_LOCKS.computeIfAbsent(database, ignored -> new LockState());
   }
 
   @Override
@@ -145,7 +149,8 @@ public class ClickHouseLockService implements LockService {
 
   @Override
   public boolean hasChangeLogLock() {
-    return state.hasLock;
+    LockState state = DATABASE_LOCKS.get(database);
+    return state != null && state.hasLock;
   }
 
   @Override
@@ -158,11 +163,12 @@ public class ClickHouseLockService implements LockService {
 
   @Override
   public boolean acquireLock() throws LockException {
-    if (state.hasLock) {
+    LockState existing = DATABASE_LOCKS.get(database);
+    if (existing != null && existing.hasLock) {
       return true;
     }
     if (lockingDisabled()) {
-      state.hasLock = true;
+      DATABASE_LOCKS.computeIfAbsent(database, ignored -> new LockState()).hasLock = true;
       return true;
     }
 
@@ -181,6 +187,7 @@ public class ClickHouseLockService implements LockService {
 
       if (arbiter.hasWon(rows, lockId, now)) {
         Instant claimedAt = findRow(rows, lockId).map(LockCandidate::claimedAt).orElse(now);
+        LockState state = DATABASE_LOCKS.computeIfAbsent(database, ignored -> new LockState());
         state.hasLock = true;
         state.heldLockId = lockId;
         state.heldClaimedAt = claimedAt;
@@ -233,11 +240,13 @@ public class ClickHouseLockService implements LockService {
 
   @Override
   public void releaseLock() throws LockException {
-    if (!state.hasLock) {
+    LockState state = DATABASE_LOCKS.get(database);
+    if (state == null || !state.hasLock) {
       return;
     }
     if (lockingDisabled()) {
       state.hasLock = false;
+      DATABASE_LOCKS.remove(database, state);
       return;
     }
 
@@ -303,10 +312,9 @@ public class ClickHouseLockService implements LockService {
 
   @Override
   public void forceReleaseLock() throws LockException, DatabaseException {
+    LockState state = DATABASE_LOCKS.get(database);
     if (lockingDisabled()) {
-      state.hasLock = false;
-      state.heldLockId = null;
-      state.heldClaimedAt = null;
+      clearAndForget(state);
       return;
     }
 
@@ -323,21 +331,31 @@ public class ClickHouseLockService implements LockService {
             describeThisProcess());
       }
     }
-    state.hasLock = false;
-    state.heldLockId = null;
-    state.heldClaimedAt = null;
-    DATABASE_LOCKS.remove(database, state);
+    clearAndForget(state);
   }
 
   @Override
   public void reset() {
     // LockServiceFactory.resetAll() calls reset() on the prototype instances it discovered via
     // the service loader, not on any instance that ever had setDatabase() called on it: those
-    // prototypes never got a LockState, and there is nothing of theirs to clear.
+    // prototypes never acquired a lock, so there is no entry of theirs to clear.
+    LockState state = DATABASE_LOCKS.get(database);
     if (state == null) {
       return;
     }
     stopHeartbeat();
+    clearAndForget(state);
+  }
+
+  /**
+   * Clears a held claim's fields and drops its map entry. {@code state} may be null - reachable
+   * from {@code forceReleaseLock()}, which can run without this instance (or any instance) having
+   * ever won a claim on {@code database}.
+   */
+  private void clearAndForget(LockState state) {
+    if (state == null) {
+      return;
+    }
     state.hasLock = false;
     state.heldLockId = null;
     state.heldClaimedAt = null;
@@ -357,7 +375,13 @@ public class ClickHouseLockService implements LockService {
 
   /** Package-private for tests: the current heartbeat thread, or null if none is running. */
   Thread currentHeartbeatThread() {
-    return state.heartbeatThread;
+    LockState state = DATABASE_LOCKS.get(database);
+    return state == null ? null : state.heartbeatThread;
+  }
+
+  /** Package-private for tests: whether a lock entry is still tracked for {@code database}. */
+  static boolean isLockStateTracked(Database database) {
+    return DATABASE_LOCKS.containsKey(database);
   }
 
   /**
@@ -440,6 +464,7 @@ public class ClickHouseLockService implements LockService {
    * a live database.
    */
   void startHeartbeat(String lockId, Instant claimedAt) {
+    LockState state = DATABASE_LOCKS.computeIfAbsent(database, ignored -> new LockState());
     state.heartbeatStopping = false;
 
     long periodMillis =
@@ -451,7 +476,7 @@ public class ClickHouseLockService implements LockService {
 
     Thread thread =
         new Thread(
-            () -> heartbeatLoop(lockId, claimedAt, periodMillis),
+            () -> heartbeatLoop(state, lockId, claimedAt, periodMillis),
             "clickhouse-changelog-lock-heartbeat-" + lockId);
     thread.setDaemon(true);
     state.heartbeatThread = thread;
@@ -469,6 +494,7 @@ public class ClickHouseLockService implements LockService {
    * a live database.
    */
   void stopHeartbeat() {
+    LockState state = DATABASE_LOCKS.get(database);
     if (state == null) {
       return;
     }
@@ -502,11 +528,11 @@ public class ClickHouseLockService implements LockService {
     }
   }
 
-  private void heartbeatLoop(String lockId, Instant claimedAt, long periodMillis) {
+  private void heartbeatLoop(LockState state, String lockId, Instant claimedAt, long periodMillis) {
     try {
       while (!Thread.currentThread().isInterrupted()) {
         Thread.sleep(periodMillis);
-        if (!renew(lockId, claimedAt)) {
+        if (!renew(state, lockId, claimedAt)) {
           return;
         }
       }
@@ -521,7 +547,7 @@ public class ClickHouseLockService implements LockService {
    * ends the loop: re-inserting past that point would either fight with whoever took the lock over,
    * or land after {@code releaseLock()} has already computed its release row.
    */
-  private boolean renew(String lockId, Instant claimedAt) {
+  private boolean renew(LockState state, String lockId, Instant claimedAt) {
     try {
       LockSnapshot snapshot = repository.readAll();
       Optional<LockCandidate> holder = arbiter.currentHolder(snapshot.rows(), snapshot.serverNow());

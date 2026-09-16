@@ -196,6 +196,25 @@ class ClickHouseLockServiceTest {
   }
 
   @Test
+  void losingContenderLeavesNoTrackedLockStateBehind() throws Exception {
+    ClickHouseLockService service = new ClickHouseLockService();
+    ClickHouseDatabase database = new ClickHouseDatabase();
+    service.setDatabase(database);
+    service.setChangeLogLockRecheckTime(0);
+
+    Instant now = Instant.now();
+    FakeLockStore store = new FakeLockStore(now);
+    store.seedLocked("earlier-contender", now.minusSeconds(60), now, 1, "other-host");
+    service.setLockStore(store);
+
+    assertThat(service.acquireLock()).isFalse();
+
+    assertThat(ClickHouseLockService.isLockStateTracked(database))
+        .as("a contender that never won must leave nothing in the shared lock-state map")
+        .isFalse();
+  }
+
+  @Test
   void releaseLockWritesAReleaseRowAndClearsLocalState() throws Exception {
     ClickHouseLockService service = new ClickHouseLockService();
     service.setDatabase(new ClickHouseDatabase());
