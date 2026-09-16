@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicLong;
+import liquibase.exception.DatabaseException;
 
 /**
  * In-memory {@link LockStore} for tests. One row per lockId, overwritten on every write, so {@link
@@ -29,7 +30,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * reproduce ReplacingMergeTree's version-based collapse.
  *
  * <p>{@link #armReadAllGate(CountDownLatch)} lets a test make exactly one {@code readAll()} call
- * block until released, to park the heartbeat mid-renewal on demand.
+ * block until released, to park the heartbeat mid-renewal on demand. {@link
+ * #armReadAllFailure(DatabaseException)} lets a test make exactly one {@code readAll()} call throw,
+ * to simulate a renewal that fails.
  */
 final class FakeLockStore implements LockStore {
 
@@ -43,6 +46,7 @@ final class FakeLockStore implements LockStore {
 
   private volatile CountDownLatch gateEntered;
   private volatile CountDownLatch gateRelease;
+  private volatile DatabaseException readAllFailure;
 
   FakeLockStore(Instant now) {
     this.now = now;
@@ -98,8 +102,18 @@ final class FakeLockStore implements LockStore {
     writes.add(new Write("release", row));
   }
 
+  /** Makes the next {@code readAll()} call throw {@code failure} instead of returning normally. */
+  void armReadAllFailure(DatabaseException failure) {
+    this.readAllFailure = failure;
+  }
+
   @Override
-  public LockSnapshot readAll() {
+  public LockSnapshot readAll() throws DatabaseException {
+    DatabaseException failure = readAllFailure;
+    readAllFailure = null;
+    if (failure != null) {
+      throw failure;
+    }
     blockIfGated();
     return new LockSnapshot(List.copyOf(rowsByLockId.values()), now);
   }
@@ -110,7 +124,7 @@ final class FakeLockStore implements LockStore {
   }
 
   @Override
-  public long nextVersion() {
+  public long nextVersion() throws DatabaseException {
     return nextVersion(readAll().rows());
   }
 

@@ -26,6 +26,15 @@ public final class FakeJdbcConnections {
   private FakeJdbcConnections() {}
 
   public static JdbcConnection withProductName(String productName) {
+    return withProductNameAndClosedState(productName, false);
+  }
+
+  /**
+   * Same fake connection as {@link #withProductName}, but {@code isClosed()} reports {@code closed}
+   * instead of always {@code false}, so a test can simulate a connection that has already been
+   * closed out from under whatever is still using it.
+   */
+  public static JdbcConnection withProductNameAndClosedState(String productName, boolean closed) {
     DatabaseMetaData metaData =
         (DatabaseMetaData)
             Proxy.newProxyInstance(
@@ -38,6 +47,9 @@ public final class FakeJdbcConnections {
                       case "getDatabaseMajorVersion", "getDatabaseMinorVersion" -> 0;
                       case "getURL" -> "jdbc:clickhouse://localhost:8123/default";
                       case "getUserName" -> "default";
+                      // AbstractJdbcDatabase.setConnection() calls attached(), which upper-cases
+                      // this unconditionally; a real driver never returns null for it.
+                      case "getSQLKeywords" -> "";
                       default -> defaultValueFor(method.getReturnType());
                     });
 
@@ -46,10 +58,15 @@ public final class FakeJdbcConnections {
             Proxy.newProxyInstance(
                 FakeJdbcConnections.class.getClassLoader(),
                 new Class<?>[] {Connection.class},
-                (proxy, method, args) ->
-                    "getMetaData".equals(method.getName())
-                        ? metaData
-                        : defaultValueFor(method.getReturnType()));
+                (proxy, method, args) -> {
+                  if ("getMetaData".equals(method.getName())) {
+                    return metaData;
+                  }
+                  if ("isClosed".equals(method.getName())) {
+                    return closed;
+                  }
+                  return defaultValueFor(method.getReturnType());
+                });
 
     return new JdbcConnection(connection);
   }

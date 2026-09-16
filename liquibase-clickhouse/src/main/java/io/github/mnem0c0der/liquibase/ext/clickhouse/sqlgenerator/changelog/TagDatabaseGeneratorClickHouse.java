@@ -16,6 +16,7 @@
 package io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.changelog;
 
 import io.github.mnem0c0der.liquibase.ext.clickhouse.changelog.ChangeLogTable;
+import io.github.mnem0c0der.liquibase.ext.clickhouse.cluster.ClusterConsistencySettings;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.sql.Identifiers;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.sqlgenerator.AbstractClickHouseSqlGenerator;
 import java.util.Map;
@@ -29,7 +30,9 @@ import liquibase.statement.core.TagDatabaseStatement;
  *
  * <p>ClickHouse does have UPDATE (see UpdateGeneratorClickHouse), but it is a heavy asynchronous
  * mutation. An insert is cheap, so the latest row is reinserted with a new tag and a higher version
- * instead; FINAL keeps only that reinsert on read.
+ * instead; FINAL keeps only that reinsert on read. On a clustered deployment the insert carries the
+ * same write-consistency settings the lock table uses, for the same reason: see {@link
+ * ClusterConsistencySettings}.
  */
 public class TagDatabaseGeneratorClickHouse
     extends AbstractClickHouseSqlGenerator<TagDatabaseStatement> {
@@ -59,6 +62,7 @@ public class TagDatabaseGeneratorClickHouse
             + selectList
             + " FROM "
             + table
-            + " FINAL ORDER BY `ORDEREXECUTED` DESC LIMIT 1");
+            + " FINAL ORDER BY `ORDEREXECUTED` DESC LIMIT 1"
+            + ClusterConsistencySettings.forWrite(clusterPolicy()));
   }
 }

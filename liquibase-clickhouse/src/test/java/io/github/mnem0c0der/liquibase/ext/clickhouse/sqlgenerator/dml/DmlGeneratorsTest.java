@@ -48,6 +48,27 @@ class DmlGeneratorsTest {
         .containsExactly("INSERT INTO `analytics`.`events` (`id`, `name`) VALUES (1, 'launch')");
   }
 
+  /**
+   * The cluster consistency settings applied to the extension's own tracking tables (the lock table
+   * and the changelog table) must never leak into an ordinary user insert, clustered or not:
+   * forcing quorum writes on a user's own table is not this extension's call to make.
+   */
+  @Test
+  void ordinaryInsertCarriesNoConsistencySettingsEvenWhenClustered() throws Exception {
+    InsertStatement statement = new InsertStatement("analytics", null, "events");
+    statement.addColumnValue("id", 1L);
+    statement.addColumnValue("name", "launch");
+
+    String sql =
+        liquibase.Scope.child(
+            java.util.Map.of("liquibase.clickhouse.cluster", "analytics_cluster"),
+            () -> generate(statement).get(0));
+
+    assertThat(sql)
+        .isEqualTo("INSERT INTO `analytics`.`events` (`id`, `name`) VALUES (1, 'launch')")
+        .doesNotContain("SETTINGS");
+  }
+
   @Test
   void updatesThroughASynchronousMutation() {
     UpdateStatement statement = new UpdateStatement("analytics", null, "events");

@@ -19,6 +19,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.github.mnem0c0der.liquibase.ext.clickhouse.config.ClickHouseConfiguration;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.database.ClickHouseDatabase;
+import io.github.mnem0c0der.liquibase.ext.clickhouse.testsupport.FakeJdbcConnections;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -28,6 +30,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import liquibase.Scope;
 import liquibase.database.core.PostgresDatabase;
+import liquibase.exception.DatabaseException;
 import liquibase.lockservice.LockService;
 import org.junit.jupiter.api.Test;
 
@@ -147,6 +150,90 @@ class ClickHouseLockServiceTest {
     } finally {
       // Cleanup: interrupt the now-sleeping loop (in the buggy case it survives and keeps
       // renewing) so it doesn't linger for the rest of the suite.
+      service.stopHeartbeat();
+    }
+  }
+
+  /**
+   * Reproduces the CI failure this whole fix exists for: {@code Liquibase.close()} closes the
+   * connection out from under a still-running heartbeat, which used to log "Failed to renew ...
+   * Connection is closed" every period forever, since a dead connection can never succeed on a
+   * later attempt. Every other contender then had to wait out the full {@code lock.timeoutSeconds}
+   * instead of the intended staleness window, because nothing ever stopped the zombie heartbeat to
+   * let the lock actually go stale on its own terms.
+   */
+  @Test
+  void renewalFailingBecauseTheConnectionIsClosedStopsTheHeartbeatRatherThanLooping()
+      throws Exception {
+    ClickHouseLockService service = new ClickHouseLockService();
+    ClickHouseDatabase database = new ClickHouseDatabase();
+    database.setConnection(FakeJdbcConnections.withProductNameAndClosedState("ClickHouse", true));
+    service.setDatabase(database);
+
+    Instant claimedAt = Instant.now();
+    String lockId = "dead-connection-lock";
+    FakeLockStore store = new FakeLockStore(claimedAt);
+    store.seedLocked(lockId, claimedAt, claimedAt, 1, "host");
+    store.armReadAllFailure(
+        new DatabaseException(new SQLException("Cannot operate on a closed connection", "HY000")));
+    service.setLockStore(store);
+
+    // lock.timeoutSeconds = 1 makes the heartbeat period the computed 1000ms floor, so the first
+    // renewal round trip - the one that hits the armed failure - starts almost immediately.
+    Scope.child(
+        Map.of(ClickHouseConfiguration.LOCK_TIMEOUT_SECONDS.getKey(), "1"),
+        () -> service.startHeartbeat(lockId, claimedAt));
+
+    Thread heartbeat = service.currentHeartbeatThread();
+    assertThat(heartbeat).isNotNull();
+
+    heartbeat.join(Duration.ofSeconds(5).toMillis());
+
+    assertThat(heartbeat.isAlive())
+        .as(
+            "a renewal that fails because its connection is closed must stop the heartbeat"
+                + " instead of retrying against a connection that will never recover")
+        .isFalse();
+    assertThat(store.writes()).as("a dead connection must never be written to").isEmpty();
+  }
+
+  /**
+   * The other half of the same fix: a failure that is not a closed connection (a network blip, a
+   * slow server) must not be treated as terminal. The armed failure only fires once, so the
+   * heartbeat surviving it and going on to write a further renewal proves the loop kept going
+   * rather than stopping on the first error it saw.
+   */
+  @Test
+  void renewalFailingTransientlyStillRetriesInsteadOfStoppingTheHeartbeat() throws Exception {
+    ClickHouseLockService service = new ClickHouseLockService();
+    ClickHouseDatabase database = new ClickHouseDatabase();
+    database.setConnection(FakeJdbcConnections.withProductNameAndClosedState("ClickHouse", false));
+    service.setDatabase(database);
+
+    Instant claimedAt = Instant.now();
+    String lockId = "transient-failure-lock";
+    FakeLockStore store = new FakeLockStore(claimedAt);
+    store.seedLocked(lockId, claimedAt, claimedAt, 1, "host");
+    store.armReadAllFailure(new DatabaseException(new SQLException("timeout", "08001")));
+    service.setLockStore(store);
+
+    try {
+      Scope.child(
+          Map.of(ClickHouseConfiguration.LOCK_TIMEOUT_SECONDS.getKey(), "1"),
+          () -> service.startHeartbeat(lockId, claimedAt));
+
+      long deadline = System.currentTimeMillis() + 6000;
+      while (store.writes().isEmpty() && System.currentTimeMillis() < deadline) {
+        Thread.sleep(50);
+      }
+
+      assertThat(store.writes())
+          .as("the renewal after the transient failure must still have gone through")
+          .anyMatch(write -> write.kind().equals("renew"));
+      assertThat(service.currentHeartbeatThread().isAlive())
+          .as("a transient failure must not stop the heartbeat")
+          .isTrue();
+    } finally {
       service.stopHeartbeat();
     }
   }

@@ -32,6 +32,7 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import liquibase.Scope;
 import liquibase.database.Database;
+import liquibase.database.DatabaseConnection;
 import liquibase.exception.DatabaseException;
 import liquibase.exception.LockException;
 import liquibase.lockservice.DatabaseChangeLogLock;
@@ -571,10 +572,45 @@ public class ClickHouseLockService implements LockService {
           lockId, claimedAt, repository.nextVersion(snapshot.rows()), describeThisProcess());
       return true;
     } catch (DatabaseException failure) {
+      if (isConnectionClosed()) {
+        // The connection is gone for good: every future renewal would fail the exact same way,
+        // and there is nothing left to release the lock with either. Stopping now, rather than
+        // looping until stopHeartbeat() gives up on a thread that was never going to make
+        // progress, is what lets every other contender wait out the staleness window instead of
+        // the full lock.timeoutSeconds on top of it.
+        Scope.getCurrentScope()
+            .getLog(ClickHouseLockService.class)
+            .severe(
+                "The ClickHouse changelog lock (lockId "
+                    + lockId
+                    + ") can no longer be renewed: its database connection is closed. Stopping"
+                    + " the heartbeat; the lock is left to expire on its own via the staleness"
+                    + " window.");
+        return false;
+      }
+      // A transient failure (network blip, slow server): the connection is still usable, so the
+      // next scheduled renewal is worth trying again.
       Scope.getCurrentScope()
           .getLog(ClickHouseLockService.class)
           .severe("Failed to renew the ClickHouse changelog lock (lockId " + lockId + ")", failure);
       return true;
+    }
+  }
+
+  /**
+   * True once the connection this heartbeat renews through has been closed out from under it, most
+   * commonly by {@code Liquibase.close()} racing the heartbeat thread. A closed connection can
+   * never succeed on a later attempt, unlike a genuinely transient failure, so this is what tells
+   * {@link #renew} to stop retrying instead of looping forever.
+   */
+  private boolean isConnectionClosed() {
+    try {
+      DatabaseConnection connection = database.getConnection();
+      return connection == null || connection.isClosed();
+    } catch (DatabaseException ignored) {
+      // Can't tell either way; assume still open so a spurious failure from isClosed() itself
+      // doesn't stop a heartbeat that might otherwise still be able to renew.
+      return false;
     }
   }
 

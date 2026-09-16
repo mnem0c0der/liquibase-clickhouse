@@ -67,6 +67,19 @@ class RemainingGeneratorsTest {
   }
 
   @Test
+  void tagCarriesWriteConsistencySettingsWhenClustered() throws Exception {
+    String sql =
+        liquibase.Scope.child(
+            java.util.Map.of("liquibase.clickhouse.cluster", "analytics_cluster"),
+            () -> generate(new TagDatabaseStatement("v1")).get(0));
+
+    assertThat(sql)
+        .endsWith(
+            "ORDER BY `ORDEREXECUTED` DESC LIMIT 1 SETTINGS insert_quorum = 'auto',"
+                + " insert_quorum_parallel = 0, async_insert = 0");
+  }
+
+  @Test
   void makesAColumnNullable() {
     assertThat(
             generate(

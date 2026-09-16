@@ -15,6 +15,9 @@
  */
 package io.github.mnem0c0der.liquibase.ext.clickhouse.changelog;
 
+import io.github.mnem0c0der.liquibase.ext.clickhouse.cluster.ClusterConsistencySettings;
+import io.github.mnem0c0der.liquibase.ext.clickhouse.cluster.ClusterPolicy;
+import io.github.mnem0c0der.liquibase.ext.clickhouse.cluster.ClusterPolicyFactory;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.database.ClickHouseDatabase;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +43,12 @@ import liquibase.statement.core.RawSqlStatement;
  * version approach this class would otherwise have to duplicate. Only {@link
  * #queryDatabaseChangeLogTable} and {@link #clearAllCheckSums} need to be overridden here, because
  * neither has a dedicated {@code SqlGenerator} to carry the ClickHouse-specific behaviour.
+ *
+ * <p>On a clustered deployment, both statements carry the settings {@link
+ * ClusterConsistencySettings} defines, for the same reason {@code LockRepository} applies them to
+ * the lock table: without them, a migrator can read this table from a replica that has not yet
+ * received a row another migrator's quorum write already committed, and apply the same changeset
+ * twice.
  */
 public class ClickHouseChangeLogHistoryService extends StandardChangeLogHistoryService {
 
@@ -65,7 +74,8 @@ public class ClickHouseChangeLogHistoryService extends StandardChangeLogHistoryS
             new RawSqlStatement(
                 "SELECT * FROM "
                     + ChangeLogTable.qualifiedName(database)
-                    + " FINAL ORDER BY `DATEEXECUTED` ASC, `ORDEREXECUTED` ASC"));
+                    + " FINAL ORDER BY `DATEEXECUTED` ASC, `ORDEREXECUTED` ASC"
+                    + ClusterConsistencySettings.forRead(clusterPolicy())));
   }
 
   /**
@@ -97,9 +107,14 @@ public class ClickHouseChangeLogHistoryService extends StandardChangeLogHistoryS
                     + selectList
                     + " FROM "
                     + table
-                    + " FINAL"));
+                    + " FINAL"
+                    + ClusterConsistencySettings.forWrite(clusterPolicy())));
 
     reset();
+  }
+
+  private static ClusterPolicy clusterPolicy() {
+    return ClusterPolicyFactory.fromConfiguration();
   }
 
   private static Executor executor(Database database) {

@@ -15,6 +15,7 @@
  */
 package io.github.mnem0c0der.liquibase.ext.clickhouse.lock;
 
+import io.github.mnem0c0der.liquibase.ext.clickhouse.cluster.ClusterConsistencySettings;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.cluster.ClusterPolicy;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.sql.Identifiers;
 import java.time.Instant;
@@ -34,15 +35,13 @@ import liquibase.statement.core.RawSqlStatement;
  * <p>The table is append-only: acquiring, renewing, and releasing the lock are all an INSERT of a
  * new row with a higher version, and a ReplacingMergeTree read with FINAL keeps only the latest
  * version per lockId. On a replicated table a lagging read could let two contenders each see
- * themselves as the winner, so writes carry {@code insert_quorum = 'auto'} and reads carry {@code
- * select_sequential_consistency = 1}; both apply only to this table's own statements, and only when
- * {@link ClusterPolicy#isClustered()}. {@code insert_quorum_parallel} stays at its default of
- * {@code 0}: ClickHouse's own documentation for {@code select_sequential_consistency} says
- * sequential consistency does not work while {@code insert_quorum_parallel} is enabled, because
- * parallel quorum inserts can land on different sets of replicas, so no single replica is
- * guaranteed to have every write. With parallelism off, a contender racing another for this table
- * can be rejected with UNSATISFIED_QUORUM_FOR_PREVIOUS_WRITE (error 286); {@link QuorumWriteRetry}
- * treats that as the contention signal it is and retries rather than failing the caller outright.
+ * themselves as the winner, so writes and reads carry the settings {@link
+ * ClusterConsistencySettings} defines &mdash; the same ones {@link
+ * io.github.mnem0c0der.liquibase.ext.clickhouse.changelog.ClickHouseChangeLogHistoryService}
+ * applies to the changelog table, for the identical reason. A contender racing another for this
+ * table can be rejected with UNSATISFIED_QUORUM_FOR_PREVIOUS_WRITE (error 286); {@link
+ * QuorumWriteRetry} treats that as the contention signal it is and retries rather than failing the
+ * caller outright.
  *
  * <p>Every {@code LOCKCLAIMED} and {@code LOCKRENEWED} value is written by ClickHouse itself
  * ({@code now64(3)}), never by the calling host's own clock, so two contending hosts can never
@@ -54,31 +53,6 @@ import liquibase.statement.core.RawSqlStatement;
 public final class LockRepository implements LockStore {
 
   private static final String LOCK_TABLE = "DATABASECHANGELOGLOCK";
-
-  /**
-   * {@code 'auto'} waits for a majority of replicas rather than a fixed count, because this
-   * repository has no way to know how many replicas the cluster actually has.
-   *
-   * <p>{@code insert_quorum_parallel} is left at its default of {@code 0} (disabled), not enabled:
-   * enabling it silently breaks {@code select_sequential_consistency} on reads (see the class
-   * Javadoc), which is the guarantee {@link OptimisticLockArbiter} actually depends on to see every
-   * contender's write. The cost of leaving it disabled is that ClickHouse allows only one in-flight
-   * quorum insert per table at a time; a second contender's claim racing the first is rejected with
-   * {@code UNSATISFIED_QUORUM_FOR_PREVIOUS_WRITE} (error 286) instead of being queued. That is
-   * exactly the contention every claim/renew/release write is retried for, in {@link
-   * QuorumWriteRetry}.
-   *
-   * <p>{@code async_insert = 0} is required too: recent ClickHouse servers default {@code
-   * async_insert} to on, and a quorum insert through the async path refuses to run at all unless
-   * {@code insert_quorum_parallel} is enabled ({@code UNSUPPORTED_PARAMETER}) &mdash; satisfied
-   * here, but the async path buffers writes rather than confirming them immediately, which this
-   * repository's single-row claim/renew/release inserts have no use for.
-   */
-  private static final String WRITE_CONSISTENCY_SETTINGS =
-      " SETTINGS insert_quorum = 'auto', insert_quorum_parallel = 0, async_insert = 0";
-
-  private static final String READ_CONSISTENCY_SETTINGS =
-      " SETTINGS select_sequential_consistency = 1";
 
   private final Database database;
   private final ClusterPolicy clusterPolicy;
@@ -265,11 +239,11 @@ public final class LockRepository implements LockStore {
   }
 
   private String writeConsistencySettings() {
-    return clusterPolicy.isClustered() ? WRITE_CONSISTENCY_SETTINGS : "";
+    return ClusterConsistencySettings.forWrite(clusterPolicy);
   }
 
   private String readConsistencySettings() {
-    return clusterPolicy.isClustered() ? READ_CONSISTENCY_SETTINGS : "";
+    return ClusterConsistencySettings.forRead(clusterPolicy);
   }
 
   private void execute(String sql) throws DatabaseException {
