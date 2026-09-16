@@ -19,6 +19,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.github.mnem0c0der.liquibase.ext.clickhouse.config.ClickHouseConfiguration;
 import io.github.mnem0c0der.liquibase.ext.clickhouse.database.ClickHouseDatabase;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.ServiceLoader;
 import liquibase.Scope;
@@ -60,5 +62,28 @@ class ClickHouseLockServiceTest {
 
     assertThat(acquired).isTrue();
     assertThat(service.hasChangeLogLock()).isTrue();
+  }
+
+  @Test
+  void stopHeartbeatLeavesNoLiveHeartbeatThreadBehind() throws Exception {
+    ClickHouseLockService service = new ClickHouseLockService();
+    service.setDatabase(new ClickHouseDatabase());
+
+    // The default lock.timeoutSeconds (300s) gives the heartbeat a ~100s sleep before its first
+    // renewal round trip, so stopping it immediately below exercises the interrupt-while-sleeping
+    // path only, without ever touching the (absent) database.
+    service.startHeartbeat("test-lock-id", Instant.now());
+    Thread heartbeat = service.currentHeartbeatThread();
+    assertThat(heartbeat).isNotNull();
+    assertThat(heartbeat.isAlive()).isTrue();
+
+    service.stopHeartbeat();
+
+    // stopHeartbeat() already joins internally; this join is a second, independent check that the
+    // thread has actually terminated rather than merely been asked to.
+    heartbeat.join(Duration.ofSeconds(2).toMillis());
+    assertThat(heartbeat.getState()).isEqualTo(Thread.State.TERMINATED);
+    assertThat(heartbeat.isAlive()).isFalse();
+    assertThat(service.currentHeartbeatThread()).isNull();
   }
 }

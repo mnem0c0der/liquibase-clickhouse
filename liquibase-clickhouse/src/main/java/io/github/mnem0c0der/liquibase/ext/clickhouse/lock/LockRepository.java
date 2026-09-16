@@ -37,6 +37,10 @@ import liquibase.statement.core.RawSqlStatement;
  * themselves as the winner, so writes carry {@code insert_quorum = 'auto'} with {@code
  * insert_quorum_parallel = 0} and reads carry {@code select_sequential_consistency = 1}; both apply
  * only to this table's own statements, and only when {@link ClusterPolicy#isClustered()}.
+ *
+ * <p>Every {@code LOCKCLAIMED} and {@code LOCKRENEWED} value is written by ClickHouse itself
+ * ({@code now64(3)}), never by the calling host's own clock, so two contending hosts can never
+ * disagree about a claim's age even if their local clocks have drifted apart.
  */
 public final class LockRepository {
 
@@ -74,28 +78,75 @@ public final class LockRepository {
             + " ORDER BY (`LOCKID`)");
   }
 
-  public void insert(LockCandidate candidate) throws DatabaseException {
+  /**
+   * Inserts a brand new claim. Both {@code LOCKCLAIMED} and {@code LOCKRENEWED} are the server's
+   * current instant, since a fresh claim has not been renewed yet.
+   */
+  public void claim(String lockId, long version, String lockedBy) throws DatabaseException {
     execute(
         "INSERT INTO "
             + qualifiedName()
             + " (`ID`, `LOCKID`, `LOCKED`, `LOCKCLAIMED`, `LOCKRENEWED`, `LOCKEDBY`,"
             + " `LOCKVERSION`) VALUES (1, "
-            + Identifiers.literal(candidate.lockId())
+            + Identifiers.literal(lockId)
+            + ", 1, now64(3), now64(3), "
+            + Identifiers.literal(lockedBy)
             + ", "
-            + (candidate.locked() ? 1 : 0)
-            + ", fromUnixTimestamp64Milli("
-            + candidate.claimedAt().toEpochMilli()
-            + "), fromUnixTimestamp64Milli("
-            + candidate.renewedAt().toEpochMilli()
-            + "), "
-            + Identifiers.literal(candidate.lockedBy())
-            + ", "
-            + candidate.version()
+            + version
             + ")"
             + writeConsistencySettings());
   }
 
-  public List<LockCandidate> readAll() throws DatabaseException {
+  /**
+   * Re-inserts a still-held claim. {@code claimedAt} is written back exactly as the caller read it,
+   * so precedence never shifts across renewals; {@code LOCKRENEWED} is the server's current
+   * instant.
+   */
+  public void renew(String lockId, Instant claimedAt, long version, String lockedBy)
+      throws DatabaseException {
+    insertLockedState(lockId, true, claimedAt, version, lockedBy);
+  }
+
+  /**
+   * Inserts a release row. {@code claimedAt} is written back exactly as the caller read it, purely
+   * for diagnostics: a release row is never a candidate for {@code currentHolder}.
+   */
+  public void release(String lockId, Instant claimedAt, long version, String lockedBy)
+      throws DatabaseException {
+    insertLockedState(lockId, false, claimedAt, version, lockedBy);
+  }
+
+  private void insertLockedState(
+      String lockId, boolean locked, Instant claimedAt, long version, String lockedBy)
+      throws DatabaseException {
+    execute(
+        "INSERT INTO "
+            + qualifiedName()
+            + " (`ID`, `LOCKID`, `LOCKED`, `LOCKCLAIMED`, `LOCKRENEWED`, `LOCKEDBY`,"
+            + " `LOCKVERSION`) VALUES (1, "
+            + Identifiers.literal(lockId)
+            + ", "
+            + (locked ? 1 : 0)
+            + ", fromUnixTimestamp64Milli("
+            + claimedAt.toEpochMilli()
+            + "), now64(3), "
+            + Identifiers.literal(lockedBy)
+            + ", "
+            + version
+            + ")"
+            + writeConsistencySettings());
+  }
+
+  /**
+   * Reads every row in the table together with the server's current instant, so a caller can
+   * compare {@code renewedAt}/{@code claimedAt} against a {@code now} that came from the same clock
+   * instead of its own. The server instant is fetched as a second, tiny statement (a plain {@code
+   * now64(3)}, no table scan) because the row query alone returns nothing to attach it to when the
+   * table is empty.
+   */
+  public LockSnapshot readAll() throws DatabaseException {
+    Instant serverNow = readServerNow();
+
     List<Map<String, ?>> rows =
         executor()
             .queryForList(
@@ -118,13 +169,37 @@ public final class LockRepository {
               ((Number) value(row, "LOCKVERSION")).longValue(),
               String.valueOf(value(row, "LOCKEDBY"))));
     }
-    return candidates;
+    return new LockSnapshot(candidates, serverNow);
   }
 
-  /** Versions are monotonic in time, so the current time in milliseconds is the base value. */
+  private Instant readServerNow() throws DatabaseException {
+    List<Map<String, ?>> rows =
+        executor()
+            .queryForList(
+                new RawSqlStatement(
+                    "SELECT toUnixTimestamp64Milli(now64(3)) AS `SERVERNOWMILLIS`"));
+    return Instant.ofEpochMilli(((Number) value(rows.get(0), "SERVERNOWMILLIS")).longValue());
+  }
+
+  /**
+   * Reads all rows itself before computing the version. Callers that already hold a fresh {@link
+   * LockSnapshot} should call {@link #nextVersion(List)} instead to avoid a redundant round trip.
+   */
   public long nextVersion() throws DatabaseException {
+    return nextVersion(readAll().rows());
+  }
+
+  /**
+   * Versions are monotonic in time, so the current time in milliseconds is the base value.
+   *
+   * <p>Version no longer decides who wins the lock &mdash; {@code claimedAt} does &mdash; it only
+   * decides which duplicate row ReplacingMergeTree keeps, so it stays safe to derive from the
+   * client's own clock: {@code max(now, highest + 1)} is already monotonic against every version
+   * this repository has seen, so a client with a fast clock cannot get ahead of that guarantee.
+   */
+  public long nextVersion(List<LockCandidate> rows) {
     long now = System.currentTimeMillis();
-    long highest = readAll().stream().mapToLong(LockCandidate::version).max().orElse(0L);
+    long highest = rows.stream().mapToLong(LockCandidate::version).max().orElse(0L);
     return Math.max(now, highest + 1);
   }
 

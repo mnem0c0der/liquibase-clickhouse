@@ -52,6 +52,14 @@ import liquibase.lockservice.LockService;
 public class ClickHouseLockService implements LockService {
 
   private static final int WITHDRAW_MAX_ATTEMPTS = 3;
+  private static final long WITHDRAW_RETRY_DELAY_MILLIS = 200L;
+
+  /**
+   * Bound on how long {@code stopHeartbeat()} waits for the heartbeat thread to actually exit. A
+   * renewal is at most two lightweight round trips, so this is generous; if it is ever exceeded the
+   * thread is abandoned rather than blocking a release forever, and a warning names it.
+   */
+  private static final long HEARTBEAT_STOP_TIMEOUT_MILLIS = Duration.ofSeconds(10).toMillis();
 
   private Database database;
   private LockRepository repository;
@@ -61,6 +69,13 @@ public class ClickHouseLockService implements LockService {
   private volatile String heldLockId;
   private volatile Instant heldClaimedAt;
   private volatile Thread heartbeatThread;
+
+  /**
+   * Set by {@code stopHeartbeat()} before it interrupts the heartbeat thread, so a renewal already
+   * past its sleep and about to write can still back out instead of re-locking the table after the
+   * release has been computed.
+   */
+  private volatile boolean heartbeatStopping;
 
   private long changeLogLockWaitMillis = Duration.ofMinutes(5).toMillis();
   private long changeLogLockRecheckMillis =
@@ -122,25 +137,27 @@ public class ClickHouseLockService implements LockService {
       repository.createTableIfMissing();
 
       String lockId = UUID.randomUUID().toString();
-      Instant claimedAt = Instant.now();
-      LockCandidate claim =
-          new LockCandidate(
-              lockId, true, claimedAt, claimedAt, repository.nextVersion(), describeThisProcess());
-
-      repository.insert(claim);
+      String lockedBy = describeThisProcess();
+      List<LockCandidate> rowsBeforeClaim = repository.readAll().rows();
+      repository.claim(lockId, repository.nextVersion(rowsBeforeClaim), lockedBy);
       Thread.sleep(changeLogLockRecheckMillis);
 
-      List<LockCandidate> rows = repository.readAll();
-      if (arbiter.hasWon(rows, lockId, Instant.now())) {
+      LockSnapshot snapshot = repository.readAll();
+      List<LockCandidate> rows = snapshot.rows();
+      Instant now = snapshot.serverNow();
+
+      if (arbiter.hasWon(rows, lockId, now)) {
+        Instant claimedAt = findRow(rows, lockId).map(LockCandidate::claimedAt).orElse(now);
         hasLock = true;
         heldLockId = lockId;
         heldClaimedAt = claimedAt;
-        warnIfPreempting(rows);
+        warnIfPreempting(rows, now);
         startHeartbeat(lockId, claimedAt);
         return true;
       }
 
-      withdraw(lockId, claimedAt, claim.lockedBy());
+      Instant claimedAt = findRow(rows, lockId).map(LockCandidate::claimedAt).orElse(now);
+      withdraw(lockId, claimedAt, lockedBy);
       return false;
 
     } catch (InterruptedException interrupted) {
@@ -188,10 +205,14 @@ public class ClickHouseLockService implements LockService {
       return;
     }
 
+    // Stopping the heartbeat before reading the table means any renewal that was already past its
+    // sleep and about to write has either backed out (heartbeatStopping) or is fully done, so the
+    // read below always reflects the true last state before this release is computed.
     stopHeartbeat();
 
     try {
-      Optional<LockCandidate> holder = arbiter.currentHolder(repository.readAll(), Instant.now());
+      LockSnapshot snapshot = repository.readAll();
+      Optional<LockCandidate> holder = arbiter.currentHolder(snapshot.rows(), snapshot.serverNow());
       if (holder.isEmpty() || !holder.get().lockId().equals(heldLockId)) {
         Scope.getCurrentScope()
             .getLog(ClickHouseLockService.class)
@@ -203,14 +224,11 @@ public class ClickHouseLockService implements LockService {
                     + ". This migration most likely overlapped with another one.");
       }
 
-      repository.insert(
-          new LockCandidate(
-              heldLockId,
-              false,
-              heldClaimedAt,
-              Instant.now(),
-              repository.nextVersion(),
-              describeThisProcess()));
+      repository.release(
+          heldLockId,
+          heldClaimedAt,
+          repository.nextVersion(snapshot.rows()),
+          describeThisProcess());
     } catch (DatabaseException failure) {
       throw new LockException(failure);
     } finally {
@@ -227,7 +245,8 @@ public class ClickHouseLockService implements LockService {
     }
 
     try {
-      Optional<LockCandidate> holder = arbiter.currentHolder(repository.readAll(), Instant.now());
+      LockSnapshot snapshot = repository.readAll();
+      Optional<LockCandidate> holder = arbiter.currentHolder(snapshot.rows(), snapshot.serverNow());
 
       return holder
           .map(
@@ -255,16 +274,14 @@ public class ClickHouseLockService implements LockService {
     stopHeartbeat();
     repository.createTableIfMissing();
 
-    for (LockCandidate candidate : repository.readAll()) {
+    LockSnapshot snapshot = repository.readAll();
+    for (LockCandidate candidate : snapshot.rows()) {
       if (candidate.locked()) {
-        repository.insert(
-            new LockCandidate(
-                candidate.lockId(),
-                false,
-                candidate.claimedAt(),
-                Instant.now(),
-                repository.nextVersion(),
-                describeThisProcess()));
+        repository.release(
+            candidate.lockId(),
+            candidate.claimedAt(),
+            repository.nextVersion(snapshot.rows()),
+            describeThisProcess());
       }
     }
     hasLock = false;
@@ -287,21 +304,36 @@ public class ClickHouseLockService implements LockService {
     reset();
   }
 
+  private static Optional<LockCandidate> findRow(List<LockCandidate> rows, String lockId) {
+    return rows.stream().filter(candidate -> candidate.lockId().equals(lockId)).findFirst();
+  }
+
+  /** Package-private for tests: the current heartbeat thread, or null if none is running. */
+  Thread currentHeartbeatThread() {
+    return heartbeatThread;
+  }
+
   /**
-   * Retries a losing claim's withdrawal a few times before giving up. If it never succeeds, the
-   * claim row stays behind and every contender treats it as the holder until it goes stale, so an
-   * operator needs to be told to clear it by hand.
+   * Retries a losing claim's withdrawal a few times, with a short delay between attempts, before
+   * giving up. If it never succeeds, the claim row stays behind and every contender treats it as
+   * the holder until it goes stale, so an operator needs to be told to clear it by hand.
    */
   private void withdraw(String lockId, Instant claimedAt, String lockedBy) {
     DatabaseException lastFailure = null;
     for (int attempt = 1; attempt <= WITHDRAW_MAX_ATTEMPTS; attempt++) {
       try {
-        repository.insert(
-            new LockCandidate(
-                lockId, false, claimedAt, Instant.now(), repository.nextVersion(), lockedBy));
+        repository.release(lockId, claimedAt, repository.nextVersion(), lockedBy);
         return;
       } catch (DatabaseException failure) {
         lastFailure = failure;
+        if (attempt < WITHDRAW_MAX_ATTEMPTS) {
+          try {
+            Thread.sleep(WITHDRAW_RETRY_DELAY_MILLIS);
+          } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            break;
+          }
+        }
       }
     }
     Scope.getCurrentScope()
@@ -316,10 +348,10 @@ public class ClickHouseLockService implements LockService {
             lastFailure);
   }
 
-  private void warnIfPreempting(List<LockCandidate> rows) {
+  private void warnIfPreempting(List<LockCandidate> rows, Instant now) {
     rows.stream()
         .filter(LockCandidate::locked)
-        .filter(candidate -> arbiter.isStale(candidate, Instant.now()))
+        .filter(candidate -> arbiter.isStale(candidate, now))
         .forEach(
             stale ->
                 Scope.getCurrentScope()
@@ -338,8 +370,13 @@ public class ClickHouseLockService implements LockService {
   /**
    * Starts the background thread that keeps this holder's claim from going stale while the
    * migration is still running.
+   *
+   * <p>Package-private, not private, so a test can drive the heartbeat's lifecycle directly without
+   * a live database.
    */
-  private void startHeartbeat(String lockId, Instant claimedAt) {
+  void startHeartbeat(String lockId, Instant claimedAt) {
+    heartbeatStopping = false;
+
     long periodMillis =
         Math.max(
             1000L,
@@ -356,11 +393,41 @@ public class ClickHouseLockService implements LockService {
     thread.start();
   }
 
-  private void stopHeartbeat() {
+  /**
+   * Signals the heartbeat thread to stop, interrupts it, and waits for it to actually exit before
+   * returning. Waiting (rather than firing the interrupt and moving on) matters: a renewal that has
+   * already finished sleeping and is mid round-trip does not observe the interrupt until its next
+   * blocking call, so without a join a caller could proceed to compute a release row before that
+   * in-flight renewal has backed out or finished writing.
+   *
+   * <p>Package-private, not private, so a test can drive the heartbeat's lifecycle directly without
+   * a live database.
+   */
+  void stopHeartbeat() {
     Thread thread = heartbeatThread;
     heartbeatThread = null;
-    if (thread != null) {
+    if (thread == null) {
+      return;
+    }
+
+    heartbeatStopping = true;
+    try {
       thread.interrupt();
+      thread.join(HEARTBEAT_STOP_TIMEOUT_MILLIS);
+      if (thread.isAlive()) {
+        Scope.getCurrentScope()
+            .getLog(ClickHouseLockService.class)
+            .warning(
+                "Heartbeat thread "
+                    + thread.getName()
+                    + " did not stop within "
+                    + HEARTBEAT_STOP_TIMEOUT_MILLIS
+                    + " ms; proceeding without waiting further.");
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+    } finally {
+      heartbeatStopping = false;
     }
   }
 
@@ -379,13 +446,14 @@ public class ClickHouseLockService implements LockService {
 
   /**
    * Re-inserts the holder's row with a fresh renewedAt and a new version. Returns false once this
-   * lockId is no longer the current holder, which stops the heartbeat: re-inserting past that point
-   * would only fight with whoever took the lock over.
+   * lockId is no longer the current holder, or once the heartbeat is being stopped, either of which
+   * ends the loop: re-inserting past that point would either fight with whoever took the lock over,
+   * or land after {@code releaseLock()} has already computed its release row.
    */
   private boolean renew(String lockId, Instant claimedAt) {
     try {
-      Instant now = Instant.now();
-      Optional<LockCandidate> holder = arbiter.currentHolder(repository.readAll(), now);
+      LockSnapshot snapshot = repository.readAll();
+      Optional<LockCandidate> holder = arbiter.currentHolder(snapshot.rows(), snapshot.serverNow());
       if (holder.isEmpty() || !holder.get().lockId().equals(lockId)) {
         Scope.getCurrentScope()
             .getLog(ClickHouseLockService.class)
@@ -398,9 +466,12 @@ public class ClickHouseLockService implements LockService {
         return false;
       }
 
-      repository.insert(
-          new LockCandidate(
-              lockId, true, claimedAt, now, repository.nextVersion(), describeThisProcess()));
+      if (heartbeatStopping) {
+        return false;
+      }
+
+      repository.renew(
+          lockId, claimedAt, repository.nextVersion(snapshot.rows()), describeThisProcess());
       return true;
     } catch (DatabaseException failure) {
       Scope.getCurrentScope()

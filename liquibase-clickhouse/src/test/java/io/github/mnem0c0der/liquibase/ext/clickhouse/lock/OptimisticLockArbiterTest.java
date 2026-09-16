@@ -116,6 +116,20 @@ class OptimisticLockArbiterTest {
   }
 
   @Test
+  void aNowEarlierThanACandidatesRenewedAtDoesNotClassifyItAsStale() {
+    // Timestamps now come from the ClickHouse server, so a read can race a write: the "now" this
+    // call was handed can be slightly older than a renewal that just landed under it. That must
+    // never read as stale, or a holder heartbeating on schedule could be preempted while alive.
+    LockCandidate justRenewed = new LockCandidate("a", true, NOW, NOW.plusSeconds(5), 2, "host/a");
+    Instant slightlyBehind = NOW.plusSeconds(2);
+
+    assertThat(arbiter.isStale(justRenewed, slightlyBehind)).isFalse();
+    assertThat(arbiter.currentHolder(List.of(justRenewed), slightlyBehind))
+        .map(LockCandidate::lockId)
+        .contains("a");
+  }
+
+  @Test
   void aStaleRenewalLosesToALiveContenderEvenWithAnEarlierClaim() {
     LockCandidate staleHolder = claim("a", 1, NOW.minus(Duration.ofMinutes(10)));
     LockCandidate liveContender = claim("b", 2, NOW.minus(Duration.ofMinutes(1)));
