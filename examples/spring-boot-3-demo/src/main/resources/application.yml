@@ -1,0 +1,8 @@
+spring:
+  datasource:
+    url: jdbc:clickhouse://localhost:8123/analytics
+    username: liquibase
+    password: liquibase
+    driver-class-name: com.clickhouse.jdbc.ClickHouseDriver
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.xml

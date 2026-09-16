@@ -1,0 +1,39 @@
+/*
+ * Copyright the liquibase-clickhouse contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.github.mnem0c0der.liquibase.ext.clickhouse.cluster;
+
+/** Non-replicated topology: DDL runs on a single node and engines are left unchanged. */
+public final class StandaloneClusterPolicy implements ClusterPolicy {
+
+  public static final ClusterPolicy INSTANCE = new StandaloneClusterPolicy();
+
+  private StandaloneClusterPolicy() {}
+
+  @Override
+  public boolean isClustered() {
+    return false;
+  }
+
+  @Override
+  public String onClusterClause() {
+    return "";
+  }
+
+  @Override
+  public String resolveEngine(String requestedEngine) {
+    return requestedEngine;
+  }
+}

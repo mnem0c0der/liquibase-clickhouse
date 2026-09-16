@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+  <changeSet id="1-create-events" author="liquibase-clickhouse">
+    <createTable tableName="events">
+      <column name="id" type="bigint">
+        <constraints nullable="false"/>
+      </column>
+      <column name="name" type="varchar(100)"/>
+      <column name="created" type="timestamp"/>
+    </createTable>
+  </changeSet>
+
+  <changeSet id="2-add-country" author="liquibase-clickhouse">
+    <addColumn tableName="events">
+      <column name="country" type="varchar(2)"/>
+    </addColumn>
+  </changeSet>
+
+  <changeSet id="3-seed" author="liquibase-clickhouse">
+    <insert tableName="events">
+      <column name="id" valueNumeric="1"/>
+      <column name="name" value="launch"/>
+      <column name="country" value="KZ"/>
+    </insert>
+  </changeSet>
+
+  <changeSet id="4-rename-column" author="liquibase-clickhouse">
+    <renameColumn tableName="events" oldColumnName="country" newColumnName="country_code"/>
+  </changeSet>
+
+  <changeSet id="5-index" author="liquibase-clickhouse">
+    <createIndex tableName="events" indexName="idx_events_name">
+      <column name="name"/>
+    </createIndex>
+  </changeSet>
+
+  <changeSet id="6-tag" author="liquibase-clickhouse">
+    <tagDatabase tag="v1"/>
+  </changeSet>
+</databaseChangeLog>
