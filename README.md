@@ -129,9 +129,13 @@ ClickHouse server itself (`now64(3)`), never from the calling host's clock,
 so two contending hosts with skewed clocks can never disagree about whose
 claim is older.
 
-On a cluster, the same lock table uses quorum inserts (`insert_quorum =
-'auto'`) and sequential-consistency reads (`select_sequential_consistency =
-1`), so a lagging replica can't cause two contenders to both believe they won.
+On a cluster, both Liquibase tracking tables -- the lock table and
+`DATABASECHANGELOG` -- use quorum inserts (`insert_quorum = 'auto'`) and
+sequential-consistency reads (`select_sequential_consistency = 1`), so a
+lagging replica can neither let two contenders both believe they won the lock,
+nor hide an already-applied changeset from the next migrator. Your own tables
+are never given these settings: forcing quorum on user data is not this
+extension's decision to make.
 Quorum inserts against that table are deliberately kept serialized
 (`insert_quorum_parallel = 0`): ClickHouse's own documentation says sequential
 consistency does not hold while parallel quorum inserts are enabled, since

@@ -28,5 +28,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Explicit refusal, with a working alternative, for constructs ClickHouse does
   not have: foreign keys, adding a primary key to an existing table,
   auto-increment, unique constraints and unique indexes, and sequences.
+- On a cluster, `DATABASECHANGELOG` carries the same quorum writes and
+  sequential-consistency reads as the lock table. Without them a migrator
+  could read the changelog from a replica that had not yet received the
+  previous migrator's record and apply the same changeset twice.
 - Verified support for Liquibase 4.31.x and 5.0.x from a single artifact,
   covering Spring Boot 3 and Spring Boot 4.
