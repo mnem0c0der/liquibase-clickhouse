@@ -34,9 +34,15 @@ import liquibase.statement.core.RawSqlStatement;
  * <p>The table is append-only: acquiring, renewing, and releasing the lock are all an INSERT of a
  * new row with a higher version, and a ReplacingMergeTree read with FINAL keeps only the latest
  * version per lockId. On a replicated table a lagging read could let two contenders each see
- * themselves as the winner, so writes carry {@code insert_quorum = 'auto'} with {@code
- * insert_quorum_parallel = 1} and reads carry {@code select_sequential_consistency = 1}; both apply
- * only to this table's own statements, and only when {@link ClusterPolicy#isClustered()}.
+ * themselves as the winner, so writes carry {@code insert_quorum = 'auto'} and reads carry {@code
+ * select_sequential_consistency = 1}; both apply only to this table's own statements, and only when
+ * {@link ClusterPolicy#isClustered()}. {@code insert_quorum_parallel} stays at its default of
+ * {@code 0}: ClickHouse's own documentation for {@code select_sequential_consistency} says
+ * sequential consistency does not work while {@code insert_quorum_parallel} is enabled, because
+ * parallel quorum inserts can land on different sets of replicas, so no single replica is
+ * guaranteed to have every write. With parallelism off, a contender racing another for this table
+ * can be rejected with UNSATISFIED_QUORUM_FOR_PREVIOUS_WRITE (error 286); {@link QuorumWriteRetry}
+ * treats that as the contention signal it is and retries rather than failing the caller outright.
  *
  * <p>Every {@code LOCKCLAIMED} and {@code LOCKRENEWED} value is written by ClickHouse itself
  * ({@code now64(3)}), never by the calling host's own clock, so two contending hosts can never
@@ -53,15 +59,14 @@ public final class LockRepository implements LockStore {
    * {@code 'auto'} waits for a majority of replicas rather than a fixed count, because this
    * repository has no way to know how many replicas the cluster actually has.
    *
-   * <p>{@code insert_quorum_parallel = 1} is required, not optional: this table is written
-   * concurrently by every contender racing for the lock, and with the default {@code
-   * insert_quorum_parallel = 0} ClickHouse allows only one in-flight quorum insert per table at a
-   * time &mdash; a second contender's claim is rejected outright with {@code
-   * UNSATISFIED_QUORUM_FOR_PREVIOUS_WRITE} instead of being queued. Parallel quorum inserts relax
-   * only the ordering of unrelated rows becoming visible relative to each other; each individual
-   * insert still waits for its own majority acknowledgement before returning, which is the only
-   * guarantee {@link OptimisticLockArbiter} depends on (it never assumes insertion order across
-   * different lock ids).
+   * <p>{@code insert_quorum_parallel} is left at its default of {@code 0} (disabled), not enabled:
+   * enabling it silently breaks {@code select_sequential_consistency} on reads (see the class
+   * Javadoc), which is the guarantee {@link OptimisticLockArbiter} actually depends on to see every
+   * contender's write. The cost of leaving it disabled is that ClickHouse allows only one in-flight
+   * quorum insert per table at a time; a second contender's claim racing the first is rejected with
+   * {@code UNSATISFIED_QUORUM_FOR_PREVIOUS_WRITE} (error 286) instead of being queued. That is
+   * exactly the contention every claim/renew/release write is retried for, in {@link
+   * QuorumWriteRetry}.
    *
    * <p>{@code async_insert = 0} is required too: recent ClickHouse servers default {@code
    * async_insert} to on, and a quorum insert through the async path refuses to run at all unless
@@ -70,7 +75,7 @@ public final class LockRepository implements LockStore {
    * repository's single-row claim/renew/release inserts have no use for.
    */
   private static final String WRITE_CONSISTENCY_SETTINGS =
-      " SETTINGS insert_quorum = 'auto', insert_quorum_parallel = 1, async_insert = 0";
+      " SETTINGS insert_quorum = 'auto', insert_quorum_parallel = 0, async_insert = 0";
 
   private static final String READ_CONSISTENCY_SETTINGS =
       " SETTINGS select_sequential_consistency = 1";
@@ -101,10 +106,14 @@ public final class LockRepository implements LockStore {
   /**
    * Inserts a brand new claim. Both {@code LOCKCLAIMED} and {@code LOCKRENEWED} are the server's
    * current instant, since a fresh claim has not been renewed yet.
+   *
+   * <p>Retried on quorum contention: a retried claim is just another row version for the same
+   * {@code lockId}, which the ReplacingMergeTree collapse already resolves, so re-sending it is
+   * never a blind retry.
    */
   @Override
   public void claim(String lockId, long version, String lockedBy) throws DatabaseException {
-    execute(
+    String sql =
         "INSERT INTO "
             + qualifiedName()
             + " (`ID`, `LOCKID`, `LOCKED`, `LOCKCLAIMED`, `LOCKRENEWED`, `LOCKEDBY`,"
@@ -116,7 +125,8 @@ public final class LockRepository implements LockStore {
             + Identifiers.literal(lockedBy)
             + ", "
             + version
-            + ")");
+            + ")";
+    QuorumWriteRetry.execute(() -> execute(sql));
   }
 
   /**
@@ -140,10 +150,14 @@ public final class LockRepository implements LockStore {
     insertLockedState(lockId, false, claimedAt, version, lockedBy);
   }
 
+  /**
+   * Retried on quorum contention, like {@link #claim}: a retried renew/release is just another row
+   * version for the same {@code lockId}, which the ReplacingMergeTree collapse already resolves.
+   */
   private void insertLockedState(
       String lockId, boolean locked, Instant claimedAt, long version, String lockedBy)
       throws DatabaseException {
-    execute(
+    String sql =
         "INSERT INTO "
             + qualifiedName()
             + " (`ID`, `LOCKID`, `LOCKED`, `LOCKCLAIMED`, `LOCKRENEWED`, `LOCKEDBY`,"
@@ -159,7 +173,8 @@ public final class LockRepository implements LockStore {
             + Identifiers.literal(lockedBy)
             + ", "
             + version
-            + ")");
+            + ")";
+    QuorumWriteRetry.execute(() -> execute(sql));
   }
 
   /**
