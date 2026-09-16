@@ -104,13 +104,13 @@ class ClickHouseLockServiceTest {
       throws Exception {
     ClickHouseLockService service = new ClickHouseLockService();
     service.setDatabase(new ClickHouseDatabase());
-    service.setHeartbeatStopTimeoutMillisForTesting(200);
+    service.setHeartbeatStopTimeoutMillis(200);
 
     Instant claimedAt = Instant.now();
     String lockId = "zombie-lock";
     FakeLockStore store = new FakeLockStore(claimedAt);
     store.seedLocked(lockId, claimedAt, claimedAt, 1, "host");
-    service.setLockStoreForTesting(store);
+    service.setLockStore(store);
 
     CountDownLatch entered = new CountDownLatch(1);
     CountDownLatch release = store.armReadAllGate(entered);
@@ -157,7 +157,7 @@ class ClickHouseLockServiceTest {
     service.setDatabase(new ClickHouseDatabase());
     service.setChangeLogLockRecheckTime(0);
     FakeLockStore store = new FakeLockStore(Instant.now());
-    service.setLockStoreForTesting(store);
+    service.setLockStore(store);
 
     try {
       assertThat(service.acquireLock()).isTrue();
@@ -176,7 +176,7 @@ class ClickHouseLockServiceTest {
     Instant now = Instant.now();
     FakeLockStore store = new FakeLockStore(now);
     store.seedLocked("earlier-contender", now.minusSeconds(60), now, 1, "other-host");
-    service.setLockStoreForTesting(store);
+    service.setLockStore(store);
 
     assertThat(service.acquireLock()).isFalse();
     assertThat(service.hasChangeLogLock()).isFalse();
@@ -201,7 +201,7 @@ class ClickHouseLockServiceTest {
     service.setDatabase(new ClickHouseDatabase());
     service.setChangeLogLockRecheckTime(0);
     FakeLockStore store = new FakeLockStore(Instant.now());
-    service.setLockStoreForTesting(store);
+    service.setLockStore(store);
 
     assertThat(service.acquireLock()).isTrue();
     String heldLockId = store.writes().get(0).row().lockId();
@@ -225,7 +225,7 @@ class ClickHouseLockServiceTest {
 
     Instant now = Instant.now();
     FakeLockStore store = new FakeLockStore(now);
-    service.setLockStoreForTesting(store);
+    service.setLockStore(store);
 
     assertThat(service.acquireLock()).isTrue();
     String heldLockId = store.writes().get(0).row().lockId();

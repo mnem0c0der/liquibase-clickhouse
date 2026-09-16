@@ -330,7 +330,7 @@ public class ClickHouseLockService implements LockService {
    * wiring is unaffected; {@link #setDatabase(Database)} still builds a real {@link
    * LockRepository}.
    */
-  void setLockStoreForTesting(LockStore repository) {
+  void setLockStore(LockStore repository) {
     this.repository = repository;
   }
 
@@ -338,7 +338,7 @@ public class ClickHouseLockService implements LockService {
    * Package-private for tests: shrinks {@link #heartbeatStopTimeoutMillis} so a test that forces
    * {@code stopHeartbeat()}'s join to time out does not slow the suite down.
    */
-  void setHeartbeatStopTimeoutMillisForTesting(long heartbeatStopTimeoutMillis) {
+  void setHeartbeatStopTimeoutMillis(long heartbeatStopTimeoutMillis) {
     this.heartbeatStopTimeoutMillis = heartbeatStopTimeoutMillis;
   }
 
