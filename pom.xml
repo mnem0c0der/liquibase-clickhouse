@@ -46,7 +46,7 @@
     <maven.compiler.release>21</maven.compiler.release>
 
     <liquibase.version>4.31.1</liquibase.version>
-    <clickhouse-jdbc.version>0.10.0</clickhouse-jdbc.version>
+    <clickhouse-jdbc.version>0.11.0</clickhouse-jdbc.version>
     <junit.version>5.14.4</junit.version>
     <assertj.version>3.27.7</assertj.version>
     <testcontainers.version>1.21.4</testcontainers.version>
